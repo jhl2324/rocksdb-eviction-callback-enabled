@@ -105,6 +105,10 @@ struct ImmutableDBOptions {
   Statistics* stats;
   Logger* logger;
   std::shared_ptr<CompactionService> compaction_service;
+  MemtableSwitch memtable_switch = nullptr;
+  MemtableFlushStart memtable_flush_start = nullptr;
+  MemtableFlushOnEachKeyValue memtable_flush_on_each_key_value = nullptr;
+  MemtableFlushEnd memtable_flush_end = nullptr;
 
   bool IsWalDirSameAsDBPath() const;
   bool IsWalDirSameAsDBPath(const std::string& path) const;

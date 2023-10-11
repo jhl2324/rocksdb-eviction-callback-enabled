@@ -1291,7 +1291,8 @@ void BlockBasedTableBuilder::WriteRawBlock(const Slice& block_contents,
     switch (r->table_options.prepopulate_block_cache) {
       case BlockBasedTableOptions::PrepopulateBlockCache::kFlushAndCompaction:
         // Only populate the block cache if the file created is not at the bottommost level
-        warm_cache = r->is_bottommost == false && (r->reason == TableFileCreationReason::kFlush || r->reason == TableFileCreationReason::kCompaction);
+        //warm_cache = r->is_bottommost == false && (r->reason == TableFileCreationReason::kFlush || r->reason == TableFileCreationReason::kCompaction);
+        warm_cache = (r->reason == TableFileCreationReason::kFlush || r->reason == TableFileCreationReason::kCompaction);
         break;
       case BlockBasedTableOptions::PrepopulateBlockCache::kFlushOnly:
         warm_cache = (r->reason == TableFileCreationReason::kFlush);

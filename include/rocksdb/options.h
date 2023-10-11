@@ -16,6 +16,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <functional>
 
 #include "rocksdb/advanced_options.h"
 #include "rocksdb/comparator.h"
@@ -61,6 +62,11 @@ struct Options;
 struct DbPath;
 
 using FileTypeSet = SmallEnumSet<FileType, FileType::kBlobFile>;
+typedef std::function<void (const Slice & key, Slice & value)> MemTableReadCallback;
+typedef std::function<void (const MemTableInfo & old_memtbl_info)> MemtableSwitch;
+typedef std::function<void* (const int num_memtables)> MemtableFlushStart;
+typedef std::function<bool (const Slice & key, const Slice & value, void * context)> MemtableFlushOnEachKeyValue;
+typedef std::function<void (void * context)> MemtableFlushEnd;
 
 struct ColumnFamilyOptions : public AdvancedColumnFamilyOptions {
   // The function recovers options to a previous version. Only 4.6 or later
@@ -454,6 +460,14 @@ struct DBOptions {
   // bottlenecked by RocksDB.
   DBOptions* IncreaseParallelism(int total_threads = 16);
 #endif  // ROCKSDB_LITE
+
+  MemtableSwitch memtable_switch = nullptr;
+
+  MemtableFlushStart memtable_flush_start = nullptr;
+
+  MemtableFlushOnEachKeyValue memtable_flush_on_each_key_value = nullptr;
+
+  MemtableFlushEnd memtable_flush_end = nullptr;
 
   // If true, the database will be created if it is missing.
   // Default: false
@@ -1606,6 +1620,8 @@ struct ReadOptions {
   //
   // Default: false
   bool async_io;
+
+  MemTableReadCallback on_memtable_hit = nullptr;
 
   ReadOptions();
   ReadOptions(bool cksum, bool cache);

@@ -687,6 +687,7 @@ struct Saver {
   bool do_merge;
   SystemClock* clock;
 
+  MemTableReadCallback on_memtable_hit = nullptr;
   ReadCallback* callback_;
   bool* is_blob_index;
   bool allow_data_in_errors;
@@ -797,6 +798,10 @@ static bool SaveValue(void* arg, const char* entry) {
         if (ts_sz > 0 && s->timestamp != nullptr) {
           Slice ts = ExtractTimestampFromUserKey(user_key_slice, ts_sz);
           s->timestamp->assign(ts.data(), ts.size());
+        }
+
+        if (s->on_memtable_hit) {
+          s->on_memtable_hit(user_key_slice, v);
         }
         return false;
       }
@@ -912,7 +917,7 @@ bool MemTable::Get(const LookupKey& key, std::string* value,
     }
     GetFromTable(key, *max_covering_tombstone_seq, do_merge, callback,
                  is_blob_index, value, timestamp, s, merge_context, seq,
-                 &found_final_value, &merge_in_progress);
+                 &found_final_value, &merge_in_progress, read_opts.on_memtable_hit);
   }
 
   // No change to value, since we have not yet found a Put/Delete
@@ -929,7 +934,8 @@ void MemTable::GetFromTable(const LookupKey& key,
                             bool* is_blob_index, std::string* value,
                             std::string* timestamp, Status* s,
                             MergeContext* merge_context, SequenceNumber* seq,
-                            bool* found_final_value, bool* merge_in_progress) {
+                            bool* found_final_value, bool* merge_in_progress,
+                            MemTableReadCallback on_memtable_hit) {
   Saver saver;
   saver.status = s;
   saver.found_final_value = found_final_value;
@@ -950,6 +956,7 @@ void MemTable::GetFromTable(const LookupKey& key,
   saver.is_blob_index = is_blob_index;
   saver.do_merge = do_merge;
   saver.allow_data_in_errors = moptions_.allow_data_in_errors;
+  saver.on_memtable_hit = on_memtable_hit;
   table_->Get(key, &saver, SaveValue);
   *seq = saver.seq;
 }
@@ -1015,7 +1022,7 @@ void MemTable::MultiGet(const ReadOptions& read_options, MultiGetRange* range,
     GetFromTable(*(iter->lkey), iter->max_covering_tombstone_seq, true,
                  callback, &iter->is_blob_index, iter->value->GetSelf(),
                  iter->timestamp, iter->s, &(iter->merge_context), &dummy_seq,
-                 &found_final_value, &merge_in_progress);
+                 &found_final_value, &merge_in_progress, read_options.on_memtable_hit);
 
     if (!found_final_value && merge_in_progress) {
       *(iter->s) = Status::MergeInProgress();

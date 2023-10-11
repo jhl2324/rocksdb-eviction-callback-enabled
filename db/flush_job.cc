@@ -917,7 +917,7 @@ Status FlushJob::WriteLevel0Table() {
           &blob_file_additions, existing_snapshots_,
           earliest_write_conflict_snapshot_, snapshot_checker_,
           mutable_cf_options_.paranoid_file_checks, cfd_->internal_stats(),
-          &io_s, io_tracer_, BlobFileCreationReason::kFlush, event_logger_,
+          &io_s, io_tracer_, BlobFileCreationReason::kFlush, memtables.size() /* num_memtables */, event_logger_,
           job_context_->job_id, Env::IO_HIGH, &table_properties_, write_hint,
           full_history_ts_low, blob_callback_, &num_input_entries,
           &memtable_payload_bytes, &memtable_garbage_bytes);

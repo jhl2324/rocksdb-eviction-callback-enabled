@@ -65,7 +65,8 @@ Status BuildTable(
     SnapshotChecker* snapshot_checker, bool paranoid_file_checks,
     InternalStats* internal_stats, IOStatus* io_status,
     const std::shared_ptr<IOTracer>& io_tracer,
-    BlobFileCreationReason blob_creation_reason, EventLogger* event_logger,
+    BlobFileCreationReason blob_creation_reason, const int num_memtables, 
+    EventLogger* event_logger,
     int job_id, const Env::IOPriority io_priority,
     TableProperties* table_properties, Env::WriteLifeTimeHint write_hint,
     const std::string* full_history_ts_low,
@@ -198,11 +199,20 @@ Status BuildTable(
         /*manual_compaction_canceled=*/nullptr, db_options.info_log,
         full_history_ts_low);
 
+    void * memtable_flush_context = nullptr;
+    if (db_options.memtable_flush_start) {
+      memtable_flush_context = db_options.memtable_flush_start(num_memtables);
+    }
     c_iter.SeekToFirst();
     for (; c_iter.Valid(); c_iter.Next()) {
       const Slice& key = c_iter.key();
       const Slice& value = c_iter.value();
       const ParsedInternalKey& ikey = c_iter.ikey();
+      if (db_options.memtable_flush_on_each_key_value) {
+        if (!db_options.memtable_flush_on_each_key_value(ikey.user_key, value, memtable_flush_context)) {
+          continue;
+        }
+      }
       // Generate a rolling 64-bit hash of the key and values
       // Note :
       // Here "key" integrates 'sequence_number'+'kType'+'user key'.
@@ -220,6 +230,11 @@ Status BuildTable(
             ThreadStatus::FLUSH_BYTES_WRITTEN, IOSTATS(bytes_written));
       }
     }
+
+    if (db_options.memtable_flush_end) {
+      db_options.memtable_flush_end(memtable_flush_context);
+    }
+
     if (!s.ok()) {
       c_iter.status().PermitUncheckedError();
     } else if (!c_iter.status().ok()) {

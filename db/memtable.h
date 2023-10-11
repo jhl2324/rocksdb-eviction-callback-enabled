@@ -599,7 +599,8 @@ class MemTable {
                     ReadCallback* callback, bool* is_blob_index,
                     std::string* value, std::string* timestamp, Status* s,
                     MergeContext* merge_context, SequenceNumber* seq,
-                    bool* found_final_value, bool* merge_in_progress);
+                    bool* found_final_value, bool* merge_in_progress,
+                    MemTableReadCallback on_memtable_hit);
 
   // Always returns non-null and assumes certain pre-checks are done
   FragmentedRangeTombstoneIterator* NewRangeTombstoneIteratorInternal(

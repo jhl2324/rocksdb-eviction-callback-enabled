@@ -736,7 +736,11 @@ ImmutableDBOptions::ImmutableDBOptions(const DBOptions& options)
       db_host_id(options.db_host_id),
       checksum_handoff_file_types(options.checksum_handoff_file_types),
       lowest_used_cache_tier(options.lowest_used_cache_tier),
-      compaction_service(options.compaction_service) {
+      compaction_service(options.compaction_service),
+      memtable_switch(options.memtable_switch),
+      memtable_flush_start(options.memtable_flush_start),
+      memtable_flush_on_each_key_value(options.memtable_flush_on_each_key_value),
+      memtable_flush_end(options.memtable_flush_end) {
   fs = env->GetFileSystem();
   if (env != nullptr) {
     clock = env->GetSystemClock().get();
