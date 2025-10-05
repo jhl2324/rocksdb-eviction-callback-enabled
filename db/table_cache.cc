@@ -17,6 +17,9 @@
 #include "file/filename.h"
 #include "file/random_access_file_reader.h"
 #include "monitoring/perf_context_imp.h"
+#include <inttypes.h>
+#include "logging/logging.h"
+#include "rocksdb/env.h"
 #include "rocksdb/advanced_options.h"
 #include "rocksdb/statistics.h"
 #include "table/block_based/block_based_table_reader.h"
@@ -39,6 +42,58 @@ template <class T>
 static void DeleteEntry(const Slice& /*key*/, void* value) {
   T* typed_value = reinterpret_cast<T*>(value);
   delete typed_value;
+}
+
+struct RowCacheEntry {
+  std::string value;
+  Logger* info_log = nullptr;
+};
+
+static bool ParseRowCacheKey(const Slice& cache_key, uint64_t* cache_id,
+                             uint64_t* file_number, uint64_t* seq_no,
+                             Slice* user_key) {
+  const char* p = cache_key.data();
+  const char* limit = p + cache_key.size();
+  const char* next = GetVarint64Ptr(p, limit, cache_id);
+  if (next == nullptr) {
+    return false;
+  }
+  p = next;
+  next = GetVarint64Ptr(p, limit, file_number);
+  if (next == nullptr) {
+    return false;
+  }
+  p = next;
+  next = GetVarint64Ptr(p, limit, seq_no);
+  if (next == nullptr) {
+    return false;
+  }
+  p = next;
+  *user_key = Slice(p, static_cast<size_t>(limit - p));
+  return true;
+}
+
+static void DeleteRowCacheEntry(const Slice& key, void* value) {
+  auto* entry = reinterpret_cast<RowCacheEntry*>(value);
+  if (entry != nullptr && entry->info_log != nullptr) {
+    uint64_t cache_id = 0;
+    uint64_t file_number = 0;
+    uint64_t seq_no = 0;
+    Slice user_key;
+    if (ParseRowCacheKey(key, &cache_id, &file_number, &seq_no, &user_key)) {
+      std::string user_key_hex = user_key.ToString(true /*hex*/);
+      ROCKS_LOG_INFO(entry->info_log,
+                     "Row cache evicted (cache_id=%" PRIu64 ", file=%" PRIu64
+                     ", seq=%" PRIu64 ", user_key_hex=%s)",
+                     cache_id, file_number, seq_no, user_key_hex.c_str());
+    } else {
+      std::string key_hex = key.ToString(true /*hex*/);
+      ROCKS_LOG_INFO(entry->info_log,
+                     "Row cache eviction key parse failure, raw key hex: %s",
+                     key_hex.c_str());
+    }
+  }
+  delete entry;
 }
 
 static void UnrefEntry(void* arg1, void* arg2) {
@@ -376,11 +431,12 @@ bool TableCache::GetFromRowCache(const Slice& user_key, IterKey& row_cache_key,
                                        void* cache_handle) {
       ((Cache*)cache_to_clean)->Release((Cache::Handle*)cache_handle);
     };
-    auto found_row_cache_entry =
-        static_cast<const std::string*>(ioptions_.row_cache->Value(row_handle));
+    auto* found_row_cache_entry =
+        static_cast<RowCacheEntry*>(ioptions_.row_cache->Value(row_handle));
+    const std::string& cached_replay_log = found_row_cache_entry->value;
     // If it comes here value is located on the cache.
-    // found_row_cache_entry points to the value on cache,
-    // and value_pinner has cleanup procedure for the cached entry.
+    // found_row_cache_entry points to the cached row entry,
+    // and cached_replay_log references the stored value buffer.
     // After replayGetContextLog() returns, get_context.pinnable_slice_
     // will point to cache entry buffer (or a copy based on that) and
     // cleanup routine under value_pinner will be delegated to
@@ -388,7 +444,7 @@ bool TableCache::GetFromRowCache(const Slice& user_key, IterKey& row_cache_key,
     // get_context.pinnable_slice_ is reset.
     value_pinner.RegisterCleanup(release_cache_entry_func,
                                  ioptions_.row_cache.get(), row_handle);
-    replayGetContextLog(*found_row_cache_entry, user_key, get_context,
+    replayGetContextLog(cached_replay_log, user_key, get_context,
                         &value_pinner);
     RecordTick(ioptions_.stats, ROW_CACHE_HIT);
     found = true;
@@ -468,13 +524,15 @@ Status TableCache::Get(
 #ifndef ROCKSDB_LITE
   // Put the replay log in row cache only if something was found.
   if (!done && s.ok() && row_cache_entry && !row_cache_entry->empty()) {
-    size_t charge =
-        row_cache_key.Size() + row_cache_entry->size() + sizeof(std::string);
-    void* row_ptr = new std::string(std::move(*row_cache_entry));
+    size_t charge = row_cache_key.Size() + row_cache_entry->size() +
+                    sizeof(RowCacheEntry);
+    auto* row_ptr = new RowCacheEntry();
+    row_ptr->value = std::move(*row_cache_entry);
+    row_ptr->info_log = ioptions_.info_log.get();
     // If row cache is full, it's OK to continue.
     ioptions_.row_cache
         ->Insert(row_cache_key.GetUserKey(), row_ptr, charge,
-                 &DeleteEntry<std::string>)
+                 &DeleteRowCacheEntry)
         .PermitUncheckedError();
   }
 #endif  // ROCKSDB_LITE
@@ -592,13 +650,15 @@ Status TableCache::MultiGet(
                                user_key.size());
       // Put the replay log in row cache only if something was found.
       if (s.ok() && !row_cache_entry.empty()) {
-        size_t charge =
-            row_cache_key.Size() + row_cache_entry.size() + sizeof(std::string);
-        void* row_ptr = new std::string(std::move(row_cache_entry));
+        size_t charge = row_cache_key.Size() + row_cache_entry.size() +
+                        sizeof(RowCacheEntry);
+        auto* row_ptr = new RowCacheEntry();
+        row_ptr->value = std::move(row_cache_entry);
+        row_ptr->info_log = ioptions_.info_log.get();
         // If row cache is full, it's OK.
         ioptions_.row_cache
             ->Insert(row_cache_key.GetUserKey(), row_ptr, charge,
-                     &DeleteEntry<std::string>)
+                     &DeleteRowCacheEntry)
             .PermitUncheckedError();
       }
     }
