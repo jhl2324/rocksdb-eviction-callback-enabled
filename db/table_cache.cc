@@ -20,6 +20,7 @@
 #include <inttypes.h>
 #include "logging/logging.h"
 #include "rocksdb/env.h"
+#include <atomic>
 #include "rocksdb/advanced_options.h"
 #include "rocksdb/statistics.h"
 #include "table/block_based/block_based_table_reader.h"
@@ -47,6 +48,9 @@ static void DeleteEntry(const Slice& /*key*/, void* value) {
 struct RowCacheEntry {
   std::string value;
   Logger* info_log = nullptr;
+  Env* env = nullptr;
+  uint64_t insert_time_micros = 0;
+  std::atomic<uint64_t> hit_count{0};
 };
 
 static bool ParseRowCacheKey(const Slice& cache_key, uint64_t* cache_id,
@@ -80,17 +84,28 @@ static void DeleteRowCacheEntry(const Slice& key, void* value) {
     uint64_t file_number = 0;
     uint64_t seq_no = 0;
     Slice user_key;
+    uint64_t residency_micros = 0;
+    if (entry->insert_time_micros > 0) {
+      Env* env = entry->env != nullptr ? entry->env : Env::Default();
+      uint64_t now_micros = env != nullptr ? env->NowMicros() : 0;
+      if (now_micros >= entry->insert_time_micros) {
+        residency_micros = now_micros - entry->insert_time_micros;
+      }
+    }
     if (ParseRowCacheKey(key, &cache_id, &file_number, &seq_no, &user_key)) {
-      std::string user_key_hex = user_key.ToString(true /*hex*/);
+      std::string user_key_hex = user_key.ToString(true);
       ROCKS_LOG_INFO(entry->info_log,
                      "Row cache evicted (cache_id=%" PRIu64 ", file=%" PRIu64
-                     ", seq=%" PRIu64 ", user_key_hex=%s)",
-                     cache_id, file_number, seq_no, user_key_hex.c_str());
+                     ", seq=%" PRIu64 ", user_key_hex=%s, residency_micros=%"
+                     PRIu64 ", hit_count=%" PRIu64 ")",
+                     cache_id, file_number, seq_no, user_key_hex.c_str(),
+                     residency_micros, entry->hit_count.load(std::memory_order_relaxed));
     } else {
-      std::string key_hex = key.ToString(true /*hex*/);
+      std::string key_hex = key.ToString(true);
       ROCKS_LOG_INFO(entry->info_log,
-                     "Row cache eviction key parse failure, raw key hex: %s",
-                     key_hex.c_str());
+                     "Row cache eviction key parse failure, raw key hex: %s, "
+                     "residency_micros=%" PRIu64 ", hit_count=%" PRIu64,
+                     key_hex.c_str(), residency_micros, entry->hit_count.load(std::memory_order_relaxed));
     }
   }
   delete entry;
@@ -433,6 +448,7 @@ bool TableCache::GetFromRowCache(const Slice& user_key, IterKey& row_cache_key,
     };
     auto* found_row_cache_entry =
         static_cast<RowCacheEntry*>(ioptions_.row_cache->Value(row_handle));
+    found_row_cache_entry->hit_count.fetch_add(1, std::memory_order_relaxed);
     const std::string& cached_replay_log = found_row_cache_entry->value;
     // If it comes here value is located on the cache.
     // found_row_cache_entry points to the cached row entry,
@@ -529,6 +545,13 @@ Status TableCache::Get(
     auto* row_ptr = new RowCacheEntry();
     row_ptr->value = std::move(*row_cache_entry);
     row_ptr->info_log = ioptions_.info_log.get();
+    Env* env = ioptions_.env;
+    if (env == nullptr) {
+      env = Env::Default();
+    }
+    row_ptr->env = env;
+    row_ptr->insert_time_micros = env != nullptr ? env->NowMicros() : 0;
+    row_ptr->hit_count = 0;
     // If row cache is full, it's OK to continue.
     ioptions_.row_cache
         ->Insert(row_cache_key.GetUserKey(), row_ptr, charge,
@@ -655,6 +678,13 @@ Status TableCache::MultiGet(
         auto* row_ptr = new RowCacheEntry();
         row_ptr->value = std::move(row_cache_entry);
         row_ptr->info_log = ioptions_.info_log.get();
+        Env* env = ioptions_.env;
+        if (env == nullptr) {
+          env = Env::Default();
+        }
+        row_ptr->env = env;
+        row_ptr->insert_time_micros = env != nullptr ? env->NowMicros() : 0;
+        row_ptr->hit_count = 0;
         // If row cache is full, it's OK.
         ioptions_.row_cache
             ->Insert(row_cache_key.GetUserKey(), row_ptr, charge,
