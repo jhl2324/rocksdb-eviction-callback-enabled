@@ -252,9 +252,11 @@ IOStatus BlockFetcher::ReadBlockContents() {
     IOOptions opts;
     io_status_ = file_->PrepareIOOptions(read_options_, opts);
     // Actual file read
+    // [point lookup flow 조사] - 직접 I/O로 target data block 조회
     if (io_status_.ok()) {
       if (file_->use_direct_io()) {
         PERF_TIMER_GUARD(block_read_time);
+        // [point lookup flow 조사] - 직접 I/O로 target data block 조회
         io_status_ = file_->Read(
             opts, handle_.offset(), block_size_with_trailer_, &slice_, nullptr,
             &direct_io_buf_, read_options_.rate_limiter_priority);

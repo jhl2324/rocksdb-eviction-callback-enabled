@@ -1462,6 +1462,7 @@ IndexBlockIter* BlockBasedTable::InitBlockIterator<IndexBlockIter>(
 // the caller has already read it. In both cases, if ro.fill_cache is true,
 // it inserts the block into the block cache.
 template <typename TBlocklike>
+// [point lookup flow 조사] - Block cache hit 여부 조사 및 I/O 수행 직접적으로 수행하는 로직
 Status BlockBasedTable::MaybeReadBlockAndLoadToCache(
     FilePrefetchBuffer* prefetch_buffer, const ReadOptions& ro,
     const BlockHandle& handle, const UncompressionDict& uncompression_dict,
@@ -1487,6 +1488,7 @@ Status BlockBasedTable::MaybeReadBlockAndLoadToCache(
     key = key_data.AsSlice();
 
     if (!contents) {
+      // [point lookup flow 조사] - Block cache hit 여부 조사
       s = GetDataBlockFromCache(key, block_cache, block_cache_compressed, ro,
                                 block_entry, uncompression_dict, block_type,
                                 wait, get_context);
@@ -1509,6 +1511,7 @@ Status BlockBasedTable::MaybeReadBlockAndLoadToCache(
 
     // Can't find the block from the cache. If I/O is allowed, read from the
     // file.
+    // [point lookup flow 조사] - Block cache miss 시 I/O 수행
     if (block_entry->GetValue() == nullptr &&
         block_entry->GetCacheHandle() == nullptr && !no_io && ro.fill_cache) {
       Statistics* statistics = rep_->ioptions.stats;
@@ -1528,6 +1531,8 @@ Status BlockBasedTable::MaybeReadBlockAndLoadToCache(
             rep_->persistent_cache_options,
             GetMemoryAllocator(rep_->table_options),
             GetMemoryAllocatorForCompressedBlock(rep_->table_options));
+        // [point lookup flow 조사] - I/O 수행
+        // table/block_fetcher.cc에서 정의
         s = block_fetcher.ReadBlockContents();
         raw_block_comp_type = block_fetcher.get_compression_type();
         contents = &raw_block_contents;
@@ -1920,6 +1925,7 @@ void BlockBasedTable::RetrieveMultipleBlocks(
 }
 
 template <typename TBlocklike>
+// [point lookup flow 조사] - Block cache hit 여부 조사 및 I/O 수행 직접적으로 수행하는 로직
 Status BlockBasedTable::RetrieveBlock(
     FilePrefetchBuffer* prefetch_buffer, const ReadOptions& ro,
     const BlockHandle& handle, const UncompressionDict& uncompression_dict,
@@ -1931,6 +1937,7 @@ Status BlockBasedTable::RetrieveBlock(
 
   Status s;
   if (use_cache) {
+    // [point lookup flow 조사] - Block cache hit 여부 조사 및 I/O 수행
     s = MaybeReadBlockAndLoadToCache(
         prefetch_buffer, ro, handle, uncompression_dict, wait_for_cache,
         block_entry, block_type, get_context, lookup_context,
@@ -2312,6 +2319,7 @@ void BlockBasedTable::FullFilterKeysMayMatch(
   }
 }
 
+// [point lookup flow 조사] - filter -> index -> data block 순 조회
 Status BlockBasedTable::Get(const ReadOptions& read_options, const Slice& key,
                             GetContext* get_context,
                             const SliceTransform* prefix_extractor,
@@ -2337,12 +2345,15 @@ Status BlockBasedTable::Get(const ReadOptions& read_options, const Slice& key,
         read_options.snapshot != nullptr;
   }
   TEST_SYNC_POINT("BlockBasedTable::Get:BeforeFilterMatch");
+  // [point lookup flow 조사] - bloom filter 체크
   const bool may_match = FullFilterKeyMayMatch(
       filter, key, no_io, prefix_extractor, get_context, &lookup_context);
   TEST_SYNC_POINT("BlockBasedTable::Get:AfterFilterMatch");
+  // [point lookup flow 조사] - BF가 false, 즉 key가 무조건 없다고 확인된 경우
   if (!may_match) {
     RecordTick(rep_->ioptions.stats, BLOOM_FILTER_USEFUL);
     PERF_COUNTER_BY_LEVEL_ADD(bloom_filter_useful, 1, rep_->level);
+  // [point lookup flow 조사] - BF가 true, 즉 key가 있을 수도 있다고 판단된 경우
   } else {
     IndexBlockIter iiter_on_stack;
     // if prefix_extractor found in block differs from options, disable
@@ -2399,6 +2410,8 @@ Status BlockBasedTable::Get(const ReadOptions& read_options, const Slice& key,
       bool does_referenced_key_exist = false;
       DataBlockIter biter;
       uint64_t referenced_data_size = 0;
+      // [point lookup flow 조사] - Block cache hit 확인
+      // Hit 시 읽어 오고, miss 시 I/O 수행
       NewDataBlockIterator<DataBlockIter>(
           read_options, v.handle, &biter, BlockType::kData, get_context,
           &lookup_data_block_context,

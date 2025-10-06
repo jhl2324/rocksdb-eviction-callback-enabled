@@ -21,6 +21,7 @@ namespace ROCKSDB_NAMESPACE {
 // into an iterator over the contents of the corresponding block.
 // If input_iter is null, new a iterator
 // If input_iter is not null, update this iter and return it
+// [point lookup flow 조사] - Block cache hit 여부 조사 및 I/O 수행 로직
 template <typename TBlockIter>
 TBlockIter* BlockBasedTable::NewDataBlockIterator(
     const ReadOptions& ro, const BlockHandle& handle, TBlockIter* input_iter,
@@ -52,6 +53,8 @@ TBlockIter* BlockBasedTable::NewDataBlockIterator(
                                       : UncompressionDict::GetEmptyDict();
 
   CachableEntry<Block> block;
+  // [point lookup flow 조사] - Block cache hit 여부 조사 및 I/O 수행 직접적으로 수행하는 로직
+  // table/block_based/block_based_table_read.cc에 정의
   s = RetrieveBlock(prefetch_buffer, ro, handle, dict, &block, block_type,
                     get_context, lookup_context, for_compaction,
                     /* use_cache */ true, /* wait_for_cache */ true);

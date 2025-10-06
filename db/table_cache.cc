@@ -471,6 +471,7 @@ bool TableCache::GetFromRowCache(const Slice& user_key, IterKey& row_cache_key,
 }
 #endif  // ROCKSDB_LITE
 
+// [point lookup flow 조사] - Row cache -> Block cache -> I/O 순으로 key 조회
 Status TableCache::Get(
     const ReadOptions& options,
     const InternalKeyComparator& internal_comparator,
@@ -487,6 +488,7 @@ Status TableCache::Get(
 
   // Check row cache if enabled. Since row cache does not currently store
   // sequence numbers, we cannot use it if we need to fetch the sequence.
+  // [point lookup flow 조사] - Row cache hit 조회 (Row cache 활성화 시만 진행)
   if (ioptions_.row_cache && !get_context->NeedToReadSequence()) {
     auto user_key = ExtractUserKey(k);
     CreateRowCacheKeyPrefix(options, fd, k, get_context, row_cache_key);
@@ -527,6 +529,9 @@ Status TableCache::Get(
     }
     if (s.ok()) {
       get_context->SetReplayLog(row_cache_entry);  // nullptr if no cache.
+      // [point lookup flow 조사] - Block cache 및 I/O 조회
+      // adapter 측에서 rocksdb::BlockBasedTableOptions table_options; => Block based table 사용
+      // table/block_based/block_based_table_reader.cc의 BlockBasedTable::Get() 호출
       s = t->Get(options, k, get_context, prefix_extractor.get(), skip_filters);
       get_context->SetReplayLog(nullptr);
     } else if (options.read_tier == kBlockCacheTier && s.IsIncomplete()) {
@@ -539,6 +544,11 @@ Status TableCache::Get(
 
 #ifndef ROCKSDB_LITE
   // Put the replay log in row cache only if something was found.
+  // [point lookup flow 조사] - 위의 t->Get()에서 Block cache 조회 및 I/O 수행한 다음
+  // Row cache 활성화한 경우 row cache에도 caching 수행
+  // [Hybrid 기법 위한 수정]
+  // Row cache caching -> Threshold에 따라 MemTable / Row cache 중
+  // 어디에 caching 할 지 결정
   if (!done && s.ok() && row_cache_entry && !row_cache_entry->empty()) {
     size_t charge = row_cache_key.Size() + row_cache_entry->size() +
                     sizeof(RowCacheEntry);

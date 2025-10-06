@@ -1859,10 +1859,12 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
   bool done = false;
   std::string* timestamp =
       ucmp->timestamp_size() > 0 ? get_impl_options.timestamp : nullptr;
+  // [point lookup flow 조사] - Mutable / Immutable MemTable hit 조사
   if (!skip_memtable) {
     s.SetLastLevel(-1);
     // Get value associated with key
     if (get_impl_options.get_value) {
+      // [point lookup flow 조사] - Mutable MemTable hit인 경우
       if (sv->mem->Get(lkey, get_impl_options.value->GetSelf(), timestamp, &s,
                        &merge_context, &max_covering_tombstone_seq,
                        read_options, get_impl_options.callback,
@@ -1871,6 +1873,7 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
         get_impl_options.value->PinSelf();
         s.SetLastLevel(-1);
         RecordTick(stats_, MEMTABLE_HIT);
+      // [point lookup flow 조사] - Immutable MemTable hit인 경우
       } else if ((s.ok() || s.IsMergeInProgress()) &&
                  sv->imm->Get(lkey, get_impl_options.value->GetSelf(),
                               timestamp, &s, &merge_context,
@@ -1906,8 +1909,10 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
     }
   }
   PinnedIteratorsManager pinned_iters_mgr;
+  // [point lookup flow 조사] - MemTable miss인 경우
   if (!done) {
     PERF_TIMER_GUARD(get_from_output_files_time);
+    // [point lookup flow 조사] - db/version_set.cc 내 정의된 Version::Get() 호출
     sv->current->Get(
         read_options, lkey, get_impl_options.value, timestamp, &s,
         &merge_context, &max_covering_tombstone_seq, &pinned_iters_mgr,
