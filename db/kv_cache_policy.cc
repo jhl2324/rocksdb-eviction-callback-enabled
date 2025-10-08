@@ -1,4 +1,4 @@
-#include "db/kv_cache_policy.h"
+#include "rocksdb/kv_cache_policy.h"
 
 #include <mutex>
 #include <unordered_map>
