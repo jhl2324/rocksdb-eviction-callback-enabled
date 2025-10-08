@@ -1336,6 +1336,10 @@ struct DBOptions {
   //
   // Default: kNonVolatileBlockTier
   CacheTier lowest_used_cache_tier = CacheTier::kNonVolatileBlockTier;
+
+  // [Hybrid 기법 위한 수정] - db->Get()에서 Migration vs Row cache 결정 시 사용
+  // Hash table 내 key의 invalidation_count와 threshold 비교
+  uint32_t kv_cache_invalidation_threshold = 1;
 };
 
 // Options to control the behavior of a database (passed to DB::Open)
@@ -1622,6 +1626,11 @@ struct ReadOptions {
   bool async_io;
 
   MemTableReadCallback on_memtable_hit = nullptr;
+
+  // [Hybrid 기법 위한 수정] - out_row_cache_skipped_on_io 추가
+    // true => Cache miss로 I/O 수행 && Migration 확정 (Row cache caching X)
+    // false => Cache hit로 I/O 수행 X || I/O 수행 && Row cache caching O
+  bool* out_row_cache_skipped_on_io = nullptr;
 
   ReadOptions();
   ReadOptions(bool cksum, bool cache);

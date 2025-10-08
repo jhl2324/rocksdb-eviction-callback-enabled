@@ -13,6 +13,7 @@
 #include "db/range_tombstone_fragmenter.h"
 #include "db/snapshot_impl.h"
 #include "db/version_edit.h"
+#include "db/kv_cache_policy.h"
 #include "file/file_util.h"
 #include "file/filename.h"
 #include "file/random_access_file_reader.h"
@@ -100,6 +101,9 @@ static void DeleteRowCacheEntry(const Slice& key, void* value) {
                      PRIu64 ", hit_count=%" PRIu64 ")",
                      cache_id, file_number, seq_no, user_key_hex.c_str(),
                      residency_micros, entry->hit_count.load(std::memory_order_relaxed));
+      // [Hybrid 기법 위한 수정] - Row cache eviction 시 hash table 갱신
+      KVCPKeyCtx kvcp_ctx{/*db_ptr=*/nullptr, /*cf_id=*/0, /*user_key=*/user_key};
+      KVCP_OnRowCacheEvict(kvcp_ctx);
     } else {
       std::string key_hex = key.ToString(true);
       ROCKS_LOG_INFO(entry->info_log,
@@ -482,6 +486,12 @@ Status TableCache::Get(
   auto& fd = file_meta.fd;
   std::string* row_cache_entry = nullptr;
   bool done = false;
+
+  // [Hybrid 기법 위한 수정] - out_row_cache_skipped_on_io 초기화
+  if (options.out_row_cache_skipped_on_io) {
+    *(options.out_row_cache_skipped_on_io) = false;
+  }
+
 #ifndef ROCKSDB_LITE
   IterKey row_cache_key;
   std::string row_cache_entry_buffer;
@@ -494,14 +504,27 @@ Status TableCache::Get(
     CreateRowCacheKeyPrefix(options, fd, k, get_context, row_cache_key);
     done = GetFromRowCache(user_key, row_cache_key, row_cache_key.Size(),
                            get_context);
+    // [Hybrid 기법 위한 수정] - Row cache miss 시 hash table 조회 및 갱신 수행
+    // 만약 hash table에 key가 있으면 cached key가 invalidated 됐음을 의미
+    // Hash table 내부 invalidation_count를 1만큼 increment 수행하기
     if (!done) {
       row_cache_entry = &row_cache_entry_buffer;
+      
+      // [Hybrid 기법 위한 수정] - Row cache miss 시 hash table 조회 및 갱신 수행
+      // Row cache 내 key 존재 (Hash table 내 key 존재) 시 invalidation_count 1만큼 increment
+      KVCPKeyCtx kvcp_ctx{/*db_ptr=*/nullptr, /*cf_id=*/0, /*user_key=*/user_key};
+      KVCP_OnRowCacheMiss(kvcp_ctx);
     }
   }
 #endif  // ROCKSDB_LITE
   Status s;
   TableReader* t = fd.table_reader;
   Cache::Handle* handle = nullptr;
+
+  // [Hybrid 기법 위한 수정] - I/O 여부 판단에 사용할 카운터 스냅샷
+  uint64_t old_reads = ROCKSDB_NAMESPACE::get_perf_context()->block_read_count;
+  bool did_io = false;
+
   if (!done) {
     assert(s.ok());
     if (t == nullptr) {
@@ -534,6 +557,9 @@ Status TableCache::Get(
       // table/block_based/block_based_table_reader.cc의 BlockBasedTable::Get() 호출
       s = t->Get(options, k, get_context, prefix_extractor.get(), skip_filters);
       get_context->SetReplayLog(nullptr);
+
+      // [Hybrid 기법 위한 수정] - I/O 여부 계산
+      did_io = (ROCKSDB_NAMESPACE::get_perf_context()->block_read_count > old_reads);
     } else if (options.read_tier == kBlockCacheTier && s.IsIncomplete()) {
       // Couldn't find Table in cache but treat as kFound if no_io set
       get_context->MarkKeyMayExist();
@@ -549,24 +575,56 @@ Status TableCache::Get(
   // [Hybrid 기법 위한 수정]
   // Row cache caching -> Threshold에 따라 MemTable / Row cache 중
   // 어디에 caching 할 지 결정
+  /*
+    1. key를 hash table에서 조회
+    2-1. hash table에 없으면
+      -> 기존 로직대로 Row cache에 caching
+    2-2. hash table에 있으면
+      -> threshold와 비교하여 MemTable / Row cache 중 어디에 caching 할 지 결정
+        -> Row cache 결정 시 기존 로직대로 Row cache에 caching
+        -> MemTable 결정 시 Row cache caching 스킵
+    3. Row cache에 caching 한 경우, caching 직후 hash table 갱신
+      -> hash table에 key가 없었던 경우는 삽입
+      -> hash table에 key가 있었던 경우는 갱신
+  */
+  // 밑의 if 문에 migration 하는 것으로 결정된 경우 skip 하도록 조건 추가
+  // [Hybrid 기법 위한 수정] - context 및 threshold 초기화
+  const Slice user_key = ExtractUserKey(k);
+  KVCPKeyCtx kvcp_ctx{/*db_ptr=*/nullptr, /*cf_id=*/0, /*user_key=*/user_key};
+  uint32_t cache_invalidation_threshold = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
+
   if (!done && s.ok() && row_cache_entry && !row_cache_entry->empty()) {
-    size_t charge = row_cache_key.Size() + row_cache_entry->size() +
-                    sizeof(RowCacheEntry);
-    auto* row_ptr = new RowCacheEntry();
-    row_ptr->value = std::move(*row_cache_entry);
-    row_ptr->info_log = ioptions_.info_log.get();
-    Env* env = ioptions_.env;
-    if (env == nullptr) {
-      env = Env::Default();
+    // [Hybrid 기법 위한 수정] - 해당 key에 대한 hash table 내 cache invalidation_count 값과
+    // threshold 비교해서 Migration vs Row cache 중 결정
+    if (did_io && KVCP_ShouldSkipRowCacheInsert(kvcp_ctx, cache_invalidation_threshold)) {
+      // SKIP: Row cache에 넣지 않음 => 이후 adapter 측에서 migration 수행
+      if (options.out_row_cache_skipped_on_io) {
+        *(options.out_row_cache_skipped_on_io) = true;
+      }
+    } else {
+      // (Migration X) 기존 Row cache Insert 로직
+      size_t charge = row_cache_key.Size() + row_cache_entry->size() +
+                      sizeof(RowCacheEntry);
+      auto* row_ptr = new RowCacheEntry();
+      row_ptr->value = std::move(*row_cache_entry);
+      row_ptr->info_log = ioptions_.info_log.get();
+      Env* env = ioptions_.env;
+      if (env == nullptr) {
+        env = Env::Default();
+      }
+
+      row_ptr->env = env;
+      row_ptr->insert_time_micros = env != nullptr ? env->NowMicros() : 0;
+      row_ptr->hit_count = 0;
+      // If row cache is full, it's OK to continue.
+      ioptions_.row_cache
+          ->Insert(row_cache_key.GetUserKey(), row_ptr, charge,
+                  &DeleteRowCacheEntry)
+          .PermitUncheckedError();
+
+      // [Hybrid 기법 위한 수정] - Row cache에 넣은 경우 hash table 갱신
+      KVCP_OnRowCacheInsert(kvcp_ctx);
     }
-    row_ptr->env = env;
-    row_ptr->insert_time_micros = env != nullptr ? env->NowMicros() : 0;
-    row_ptr->hit_count = 0;
-    // If row cache is full, it's OK to continue.
-    ioptions_.row_cache
-        ->Insert(row_cache_key.GetUserKey(), row_ptr, charge,
-                 &DeleteRowCacheEntry)
-        .PermitUncheckedError();
   }
 #endif  // ROCKSDB_LITE
 
