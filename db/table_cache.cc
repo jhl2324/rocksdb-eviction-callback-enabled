@@ -95,14 +95,24 @@ static void DeleteRowCacheEntry(const Slice& key, void* value) {
     }
     if (ParseRowCacheKey(key, &cache_id, &file_number, &seq_no, &user_key)) {
       std::string user_key_hex = user_key.ToString(true);
-      ROCKS_LOG_INFO(entry->info_log,
-                     "Row cache evicted (cache_id=%" PRIu64 ", file=%" PRIu64
-                     ", seq=%" PRIu64 ", user_key_hex=%s, residency_micros=%"
-                     PRIu64 ", hit_count=%" PRIu64 ")",
-                     cache_id, file_number, seq_no, user_key_hex.c_str(),
-                     residency_micros, entry->hit_count.load(std::memory_order_relaxed));
-      // [Hybrid 기법 위한 수정] - Row cache eviction 시 hash table 갱신
       KVCPKeyCtx kvcp_ctx{/*db_ptr=*/nullptr, /*cf_id=*/0, /*user_key=*/user_key};
+      uint32_t cached_cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
+      uint32_t inval_cnt  = KVCP_GetInvalidationCount(kvcp_ctx);
+
+      ROCKS_LOG_INFO(entry->info_log,
+                     "Row cache evicted (file=%" PRIu64
+                     ", user_key_hex=%s, residency_micros=%" PRIu64
+                     ", hit_count=%" PRIu64
+                     ", cached_key_count=%u"
+                     ", invalidation_count=%u)",
+                     file_number,
+                     user_key_hex.c_str(),
+                     residency_micros,
+                     entry->hit_count.load(std::memory_order_relaxed),
+                     cached_cnt,
+                     inval_cnt
+                    );
+      // [Hybrid 기법 위한 수정] - Row cache eviction 시 hash table 갱신
       KVCP_OnRowCacheEvict(kvcp_ctx);
     } else {
       std::string key_hex = key.ToString(true);
