@@ -96,9 +96,9 @@ static void DeleteRowCacheEntry(const Slice& key, void* value) {
     if (ParseRowCacheKey(key, &cache_id, &file_number, &seq_no, &user_key)) {
       std::string user_key_hex = user_key.ToString(true);
       KVCPKeyCtx kvcp_ctx{/*db_ptr=*/nullptr, /*cf_id=*/0, /*user_key=*/user_key};
+      /*
       uint32_t cached_cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
       uint32_t inval_cnt  = KVCP_GetInvalidationCount(kvcp_ctx);
-
       ROCKS_LOG_INFO(entry->info_log,
                      "Row cache evicted (file=%" PRIu64
                      ", user_key_hex=%s, residency_micros=%" PRIu64
@@ -112,6 +112,7 @@ static void DeleteRowCacheEntry(const Slice& key, void* value) {
                      cached_cnt,
                      inval_cnt
                     );
+      */
       // [Hybrid 기법 위한 수정] - Row cache eviction 시 hash table 갱신
       KVCP_OnRowCacheEvict(kvcp_ctx);
     } else {
