@@ -29,6 +29,9 @@ namespace ROCKSDB_NAMESPACE {
     // Entry 미등록인 경우 0 반환
     uint32_t KVCP_GetInvalidationCount(const KVCPKeyCtx& k);
 
+    // 해당 user key의 invalidation_count 반환
+    uint32_t KVCP_GetCachedKeyCount(const KVCPKeyCtx& k);
+
     void KVCP_ClearAll();
 
     void KVCP_SetThreshold(const void* db_ptr, uint32_t cf_id, uint32_t threshold);

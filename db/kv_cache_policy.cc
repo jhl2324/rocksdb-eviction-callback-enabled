@@ -95,6 +95,14 @@ namespace {
                 return it->second.invalidation_count;
             }
 
+            uint32_t GetCachedCount(const KVCPKeyCtx& k) {
+                auto& sh = ShardRef(k);
+                std::lock_guard<std::mutex> lk(sh.mu);
+                auto it = sh.map.find(MakeKey(k));
+                if (it == sh.map.end()) return 0;
+                return it->second.cached_key_count;
+            }
+
             void ClearAll() {
                 for (auto& sh : shards_) {
                 std::lock_guard<std::mutex> lk(sh.mu);
@@ -141,6 +149,9 @@ void KVCP_OnRowCacheInsert(const KVCPKeyCtx& k) { KVCPTable::Inst().OnInsert(k);
 void KVCP_OnRowCacheEvict(const KVCPKeyCtx& k) { KVCPTable::Inst().OnEvict(k); }
 uint32_t KVCP_GetInvalidationCount(const KVCPKeyCtx& k) {
   return KVCPTable::Inst().GetInvalidation(k);
+}
+uint32_t KVCP_GetCachedKeyCount(const KVCPKeyCtx& k) {
+  return KVCPTable::Inst().GetCachedCount(k);
 }
 void KVCP_ClearAll() { KVCPTable::Inst().ClearAll(); }
 
