@@ -129,6 +129,9 @@ static void DeleteRowCacheEntry(const Slice& key, void* value) {
       // [Hybrid 기법 위한 수정] - Row cache eviction 시 hash table 갱신
       if (KVCP_IsHybridEnabled()){
         KVCP_OnRowCacheEvict(kvcp_ctx);
+        uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
+        uint32_t th  = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
+        LogHybridChoice(ioptions_, "EVICT", user_key, inv, th);
       }
     } else {
       std::string key_hex = key.ToString(true);
