@@ -39,6 +39,10 @@ namespace ROCKSDB_NAMESPACE {
     uint32_t KVCP_GetThreshold(const void* db_ptr, uint32_t cf_id);
 
     void KVCP_SetHybridEnabled(bool on);
-    
+
     bool KVCP_IsHybridEnabled();
+
+    void KVCP_SetTraceEnabled(bool on);
+    
+    bool KVCP_IsTraceEnabled();
 }

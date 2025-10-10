@@ -9,7 +9,6 @@
 namespace ROCKSDB_NAMESPACE {
 
 namespace {
-
     struct Entry {
         uint32_t cached_key_count = 0;
         uint32_t invalidation_count = 0;
@@ -163,6 +162,15 @@ void KVCP_SetHybridEnabled(bool on) {
 
 bool KVCP_IsHybridEnabled() {
   return g_kvcp_hybrid_enabled.load(std::memory_order_relaxed);
+}
+
+static std::atomic<bool> g_kvcp_trace_enabled{false};
+
+void KVCP_SetTraceEnabled(bool on) {
+  g_kvcp_trace_enabled.store(on, std::memory_order_relaxed);
+}
+bool KVCP_IsTraceEnabled() {
+  return g_kvcp_trace_enabled.load(std::memory_order_relaxed);
 }
 
 namespace {

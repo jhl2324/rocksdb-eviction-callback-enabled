@@ -40,6 +40,19 @@ namespace ROCKSDB_NAMESPACE {
 
 namespace {
 
+static inline void LogHybridChoice(const ImmutableOptions& iopts,
+                                   const char* tag,
+                                   const Slice& user_key,
+                                   uint32_t inv,
+                                   uint32_t th) {
+  if (!KVCP_IsTraceEnabled()) return;
+  if (!iopts.info_log) return;
+  std::string key_hex = user_key.ToString(true);
+  ROCKS_LOG_INFO(iopts.info_log,
+                 "[HYBRID] %s key=%s inv=%u th=%u",
+                 tag, key_hex.c_str(), inv, th);
+}
+
 template <class T>
 static void DeleteEntry(const Slice& /*key*/, void* value) {
   T* typed_value = reinterpret_cast<T*>(value);
@@ -517,6 +530,14 @@ Status TableCache::Get(
     CreateRowCacheKeyPrefix(options, fd, k, get_context, row_cache_key);
     done = GetFromRowCache(user_key, row_cache_key, row_cache_key.Size(),
                            get_context);
+    
+    if (done && KVCP_IsHybridEnabled()) {
+      KVCPKeyCtx kvcp_ctx{/*db_ptr=*/nullptr, /*cf_id=*/0, /*user_key=*/user_key};
+      uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
+      uint32_t th  = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
+      LogHybridChoice(ioptions_, "ROW_HIT", user_key, inv, th);
+    }
+
     // [Hybrid 기법 위한 수정] - Row cache miss 시 hash table 조회 및 갱신 수행
     // 만약 hash table에 key가 있으면 cached key가 invalidated 됐음을 의미
     // Hash table 내부 invalidation_count를 1만큼 increment 수행하기
@@ -624,6 +645,13 @@ Status TableCache::Get(
       if (options.out_row_cache_skipped_on_io) {
         *(options.out_row_cache_skipped_on_io) = true;
       }
+
+      {
+        uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
+        uint32_t th  = cache_invalidation_threshold;
+        LogHybridChoice(ioptions_, "MISS->MIGRATE", user_key, inv, th);
+      }
+
     } else {
       // (Migration X) 기존 Row cache Insert 로직
       size_t charge = row_cache_key.Size() + row_cache_entry->size() +
@@ -648,6 +676,12 @@ Status TableCache::Get(
       // [Hybrid 기법 위한 수정] - Row cache에 넣은 경우 hash table 갱신
       if (KVCP_IsHybridEnabled()){
         KVCP_OnRowCacheInsert(kvcp_ctx);
+
+        {
+          uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
+          uint32_t th  = cache_invalidation_threshold;
+          LogHybridChoice(ioptions_, "MISS->ROW_INSERT", user_key, inv, th);
+        }
       }
     }
   }
