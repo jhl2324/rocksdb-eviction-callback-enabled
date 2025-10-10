@@ -155,9 +155,19 @@ uint32_t KVCP_GetCachedKeyCount(const KVCPKeyCtx& k) {
 }
 void KVCP_ClearAll() { KVCPTable::Inst().ClearAll(); }
 
+static std::atomic<bool> g_kvcp_hybrid_enabled{false};
+
+void KVCP_SetHybridEnabled(bool on) {
+  g_kvcp_hybrid_enabled.store(on, std::memory_order_relaxed);
+}
+
+bool KVCP_IsHybridEnabled() {
+  return g_kvcp_hybrid_enabled.load(std::memory_order_relaxed);
+}
+
 namespace {
 
-    constexpr uint32_t kKVCPDefaultThreshold = 3;
+    constexpr uint32_t kKVCPDefaultThreshold = 1;
 
     struct KVCP_TKey {
         const void* db_ptr;

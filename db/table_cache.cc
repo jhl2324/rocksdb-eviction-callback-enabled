@@ -114,7 +114,9 @@ static void DeleteRowCacheEntry(const Slice& key, void* value) {
                     );
       */
       // [Hybrid 기법 위한 수정] - Row cache eviction 시 hash table 갱신
-      KVCP_OnRowCacheEvict(kvcp_ctx);
+      if (KVCP_IsHybridEnabled()){
+        KVCP_OnRowCacheEvict(kvcp_ctx);
+      }
     } else {
       std::string key_hex = key.ToString(true);
       ROCKS_LOG_INFO(entry->info_log,
@@ -523,8 +525,12 @@ Status TableCache::Get(
       
       // [Hybrid 기법 위한 수정] - Row cache miss 시 hash table 조회 및 갱신 수행
       // Row cache 내 key 존재 (Hash table 내 key 존재) 시 invalidation_count 1만큼 increment
-      KVCPKeyCtx kvcp_ctx{/*db_ptr=*/nullptr, /*cf_id=*/0, /*user_key=*/user_key};
-      KVCP_OnRowCacheMiss(kvcp_ctx);
+      // [Hybrid 기법 분기] - Hash table 관리는 hybrid 일 때만 필요함
+      // 나머지 방식의 경우 불필요한 overhead만 유발하므로 hash table 관리를 수행하지 않도록 함
+      if (KVCP_IsHybridEnabled()){
+        KVCPKeyCtx kvcp_ctx{/*db_ptr=*/nullptr, /*cf_id=*/0, /*user_key=*/user_key};
+        KVCP_OnRowCacheMiss(kvcp_ctx);
+      }
     }
   }
 #endif  // ROCKSDB_LITE
@@ -601,13 +607,19 @@ Status TableCache::Get(
   // 밑의 if 문에 migration 하는 것으로 결정된 경우 skip 하도록 조건 추가
   // [Hybrid 기법 위한 수정] - context 및 threshold 초기화
   const Slice user_key = ExtractUserKey(k);
+  uint32_t cache_invalidation_threshold = 0;
   KVCPKeyCtx kvcp_ctx{/*db_ptr=*/nullptr, /*cf_id=*/0, /*user_key=*/user_key};
-  uint32_t cache_invalidation_threshold = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
+  if (KVCP_IsHybridEnabled()){
+    cache_invalidation_threshold = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
+  }
 
   if (!done && s.ok() && row_cache_entry && !row_cache_entry->empty()) {
     // [Hybrid 기법 위한 수정] - 해당 key에 대한 hash table 내 cache invalidation_count 값과
     // threshold 비교해서 Migration vs Row cache 중 결정
-    if (did_io && KVCP_ShouldSkipRowCacheInsert(kvcp_ctx, cache_invalidation_threshold)) {
+    // Cache miss & Hybrid 기법 & ShouldSkipRowCacheInsert 모두 true 일 때만
+    // MemTable caching은 Row cache 비활성화이므로 애초에 이 block 접근 안함
+    // Row caching은 cache miss 시 무조건 Row cache에 caching 하므로 
+    if (did_io && KVCP_IsHybridEnabled() && KVCP_ShouldSkipRowCacheInsert(kvcp_ctx, cache_invalidation_threshold)) {
       // SKIP: Row cache에 넣지 않음 => 이후 adapter 측에서 migration 수행
       if (options.out_row_cache_skipped_on_io) {
         *(options.out_row_cache_skipped_on_io) = true;
@@ -634,7 +646,9 @@ Status TableCache::Get(
           .PermitUncheckedError();
 
       // [Hybrid 기법 위한 수정] - Row cache에 넣은 경우 hash table 갱신
-      KVCP_OnRowCacheInsert(kvcp_ctx);
+      if (KVCP_IsHybridEnabled()){
+        KVCP_OnRowCacheInsert(kvcp_ctx);
+      }
     }
   }
 #endif  // ROCKSDB_LITE
