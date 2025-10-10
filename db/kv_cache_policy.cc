@@ -45,7 +45,7 @@ namespace {
             static KVCPTable& Inst() {
                 static KVCPTable g;
                 return g;
-            }
+            } 
 
             void OnMiss(const KVCPKeyCtx& k) {
                 auto& sh = ShardRef(k);

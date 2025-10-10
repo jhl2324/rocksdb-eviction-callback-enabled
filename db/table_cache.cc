@@ -552,14 +552,26 @@ Status TableCache::Get(
     // Hash table 내부 invalidation_count를 1만큼 increment 수행하기
     if (!done) {
       row_cache_entry = &row_cache_entry_buffer;
-      
-      // [Hybrid 기법 위한 수정] - Row cache miss 시 hash table 조회 및 갱신 수행
-      // Row cache 내 key 존재 (Hash table 내 key 존재) 시 invalidation_count 1만큼 increment
-      // [Hybrid 기법 분기] - Hash table 관리는 hybrid 일 때만 필요함
-      // 나머지 방식의 경우 불필요한 overhead만 유발하므로 hash table 관리를 수행하지 않도록 함
-      if (KVCP_IsHybridEnabled()){
+
+      if (KVCP_IsHybridEnabled()) {
         KVCPKeyCtx kvcp_ctx{/*db_ptr=*/nullptr, /*cf_id=*/0, /*user_key=*/user_key};
-        KVCP_OnRowCacheMiss(kvcp_ctx);
+
+        // 현재 해시 테이블에 이 키를 row cache에 담았던 적이 있는지 확인
+        uint32_t cached_cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
+        uint32_t inv_before = KVCP_GetInvalidationCount(kvcp_ctx);
+        uint32_t threshold = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
+
+        if (cached_cnt > 0) {
+          // (1) 과거에 row cache에 있었던 키 => invalidation에 의한 miss
+          KVCP_OnRowCacheMiss(kvcp_ctx);  // invalidation_count 1 만큼 increment
+          uint32_t inv_after = KVCP_GetInvalidationCount(kvcp_ctx);
+
+          LogHybridChoice(ioptions_, "MISS_INVALIDATED", user_key, inv_after, threshold);
+        } else {
+          // (2) row cache에 없던 키 => cold miss
+          // (정의상 invalidation_count는 증가시키지 않음)
+          LogHybridChoice(ioptions_, "MISS_NOT_CACHED", user_key, inv_before, threshold);
+        }
       }
     }
   }
@@ -688,7 +700,7 @@ Status TableCache::Get(
 
         {
           uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
-          uint32_t th  = cache_invalidation_threshold;
+          uint32_t th = cache_invalidation_threshold;
           LogHybridChoice(ioptions_, "MISS->ROW_INSERT", user_key, inv, th);
         }
       }
