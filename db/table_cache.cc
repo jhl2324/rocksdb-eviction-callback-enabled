@@ -669,27 +669,34 @@ Status TableCache::Get(
     }
 
     if (s.ok()) {
+      // block cache hit counter (block cache 조회 전)
+      auto cs_before = get_context->get_context_stats_;
+      std::string verdict = nullptr;
+
       get_context->SetReplayLog(row_cache_entry);  // nullptr if no cache.
       s = t->Get(options, k, get_context, prefix_extractor.get(), skip_filters);
       get_context->SetReplayLog(nullptr);
 
-      uint64_t new_reads = get_perf_context()->block_read_count;
-      uint64_t new_bchit = get_perf_context()->block_cache_hit_count;
+      // block cache hit counter (block cache 조회 후)
+      auto cs_after = get_context->get_context_stats_;
 
-      uint64_t d_reads = (new_reads >= old_reads) ? (new_reads - old_reads) : 0;
-      uint64_t d_hit   = (new_bchit >= old_bchit) ? (new_bchit - old_bchit) : 0;
-
-      did_io = (d_reads > 0);
-
-      // cache_index_and_filter_blocks=false 가정:
-      //  - d_reads>0  => 데이터 블록 MISS로 파일 I/O 발생
-      //  - d_reads==0 && d_hit>0 => 데이터 블록 BCACHE_HIT
-      //  - d_reads==0 && d_hit==0 => 데이터 블록 접근 자체 없음 (블룸 false, row cache 등)
-      const char* bc_verdict = "NO_BLOCK_ACCESS";
-      if (d_reads > 0) {
-        bc_verdict = "BCACHE_MISS_IO";
-      } else if (d_hit > 0) {
-        bc_verdict = "BCACHE_HIT";
+      uint64_t d_data_read = 0;
+      uint64_t d_data_hit  = 0;
+      if (cs_after.num_data_read >= cs_before.num_data_read)
+        d_data_read = cs_after.num_data_read - cs_before.num_data_read;
+      if (cs_after.num_cache_data_hit >= cs_before.num_cache_data_hit)
+        d_data_hit = cs_after.num_cache_data_hit - cs_before.num_cache_data_hit;
+      
+      // case 별 분류
+      if (d_data_read > 0) {
+        // data block 조회 => Block cache miss
+        verdict = "BCACHE_MISS_IO";
+      } else if (d_data_hit > 0) {
+        // data block 조회 => Block cache hit
+        verdict = "BCACHE_HIT";
+        // Bloom filter False로 인해 data block 조회 skip
+      } else {
+        verdict = "NO_DATA_BLOCK_ACCESS";
       }
 
       if (KVCP_IsHybridEnabled() && KVCP_IsTraceEnabled()) {
@@ -702,12 +709,12 @@ Status TableCache::Get(
 
         std::fprintf(stderr,
           "[AFTER Block Cache / I/O] lvl=%d file=%" PRIu64
-          " key=%s inv=%u th=%u cnt=%u s.ok=%d d_reads=%" PRIu64
-          " d_hit=%" PRIu64 " verdict=%s\n",
+          " key=%s inv=%u th=%u cnt=%u s.ok=%d d_data_read=%" PRIu64
+          " d_data_hit=%" PRIu64 " verdict=%s\n",
           level, file_meta.fd.GetNumber(),
           key_hex.c_str(), inv, th, cached_cnt,
           s.ok() ? 1 : 0,
-          d_reads, d_hit, bc_verdict);
+          d_data_read, d_data_hit, verdict);
         std::fflush(stderr);
       }
     }
