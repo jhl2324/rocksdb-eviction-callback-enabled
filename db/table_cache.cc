@@ -615,9 +615,9 @@ Status TableCache::Get(
 
   // I/O 스냅샷 + block cache hit/miss 스냅샷
   // get_perf_context => thread-local 이므로 동시성 상황에서도 로직 문제 없음
-  uint64_t old_reads = ROCKSDB_NAMESPACE::get_perf_context()->block_read_count;
-  uint64_t old_bchit  = ROCKSDB_NAMESPACE::get_perf_context()->block_cache_hit_count;
-  uint64_t old_bcmiss = ROCKSDB_NAMESPACE::get_perf_context()->block_cache_miss_count;
+  uint64_t old_reads = get_perf_context()->block_read_count;
+  uint64_t old_bchit  = get_perf_context()->block_cache_hit_count;
+  uint64_t old_bcmiss = get_perf_context()->block_cache_miss_count;
   bool did_io = false;
 
   if (!done) {
@@ -654,10 +654,10 @@ Status TableCache::Get(
       // I/O 발생 여부
       // 현재 BILSM처럼 cache_index_and_filter_blocks 옵션을 활성화한 상태
       // 따라서, filter / index / data block 중 하나라도 block cache에 cached 되지 않은 경우 did_io = true
-      did_io = (ROCKSDB_NAMESPACE::get_perf_context()->block_read_count > old_reads);
+      did_io = (get_perf_context()->block_read_count > old_reads);
 
-      uint64_t new_bchit  = ROCKSDB_NAMESPACE::get_perf_context()->block_cache_hit_count;
-      uint64_t new_bcmiss = ROCKSDB_NAMESPACE::get_perf_context()->block_cache_miss_count;
+      uint64_t new_bchit  = get_perf_context()->block_cache_hit_count;
+      uint64_t new_bcmiss = get_perf_context()->block_cache_miss_count;
       uint64_t d_hit  = (new_bchit  >= old_bchit)  ? (new_bchit  - old_bchit)  : 0;
       uint64_t d_miss = (new_bcmiss >= old_bcmiss) ? (new_bcmiss - old_bcmiss) : 0;
 
