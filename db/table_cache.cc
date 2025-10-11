@@ -636,10 +636,6 @@ Status TableCache::Get(
   TableReader* t = fd.table_reader;
   Cache::Handle* handle = nullptr;
 
-  // I/O 스냅샷 + block cache hit/miss 스냅샷
-  // get_perf_context => thread-local 이므로 동시성 상황에서도 로직 문제 없음
-  uint64_t old_reads = get_perf_context()->block_read_count;
-  uint64_t old_bchit  = get_perf_context()->block_cache_hit_count;
   bool did_io = false;
 
   if (!done) {
@@ -692,7 +688,7 @@ Status TableCache::Get(
       // 총 읽은 data block 수
       uint64_t blocks_accessed = d_data_read + d_data_hit;
 
-      const char* verdict = " ";
+      const char* verdict = nullptr;
       if (d_data_read > 0) {
         verdict = found ? "MISS_IO_FOUND" : "MISS_IO_NOT_FOUND";
       } else if (d_data_hit > 0) {
@@ -708,6 +704,14 @@ Status TableCache::Get(
         verdict = verdict_buf;
       }
 
+      did_io = (d_data_read > 0);
+      Slice uk = ExtractUserKey(k);
+      KVCPKeyCtx kvcp_ctx{/*db_ptr=*/nullptr, /*cf_id=*/0, /*user_key=*/uk};
+      uint32_t inv        = KVCP_GetInvalidationCount(kvcp_ctx);
+      uint32_t cached_cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
+      uint32_t th         = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
+      std::string key_hex = uk.ToString(true);
+
       std::fprintf(stderr,
         "[AFTER Block Cache / I/O] lvl=%d file=%" PRIu64
         " key=%s inv=%u th=%u cnt=%u s.ok=%d d_data_read=%" PRIu64
@@ -717,7 +721,6 @@ Status TableCache::Get(
         s.ok() ? 1 : 0,
         d_data_read, d_data_hit, blocks_accessed, verdict);
       std::fflush(stderr);
-      }
     }
   }
 
