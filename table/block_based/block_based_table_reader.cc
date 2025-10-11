@@ -17,6 +17,7 @@
 #include <vector>
 #include <cstdio>
 #include <cstdlib>
+#include <inttypes.h>
 
 #include "cache/cache_entry_roles.h"
 #include "cache/cache_key.h"
@@ -2404,6 +2405,18 @@ Status BlockBasedTable::Get(const ReadOptions& read_options, const Slice& key,
   // [point lookup flow 조사] - bloom filter 체크
   const bool may_match = FullFilterKeyMayMatch(
       filter, key, no_io, prefix_extractor, get_context, &lookup_context);
+  // [logging 추가] - Bloom filter 결과 (true / false)
+  if (const char* p = std::getenv("TRACE_BF"); p && p[0] == '1') {
+    Slice uk = ExtractUserKey(key);
+    std::string uk_hex = uk.ToString(true);
+    std::fprintf(stderr,
+        "[BF] sst=%" PRIu64 " lvl=%d may_match=%d key=%s\n",
+        rep_->sst_number_for_tracing(),              
+        rep_->level_for_tracing(),                  
+        may_match ? 1 : 0,                          
+        uk_hex.c_str());
+    std::fflush(stderr);
+  }
   TEST_SYNC_POINT("BlockBasedTable::Get:AfterFilterMatch");
   // [point lookup flow 조사] - BF가 false, 즉 key가 무조건 없다고 확인된 경우
   if (!may_match) {
@@ -2472,6 +2485,24 @@ Status BlockBasedTable::Get(const ReadOptions& read_options, const Slice& key,
           read_options, v.handle, &biter, BlockType::kData, get_context,
           &lookup_data_block_context,
           /*s=*/Status(), /*prefetch_buffer*/ nullptr);
+      
+      // [logging 추가] - Target data block cache hit 여부
+      if (const char* p = std::getenv("TRACE_DATA"); p && p[0] == '1') {
+        // NewDataBlockIterator가 내부적으로 캐시 조회를 수행하며
+        // lookup_data_block_context.is_cache_hit 에 반영
+        const bool cache_hit = lookup_data_block_context.is_cache_hit;
+        const bool did_io = !cache_hit;
+
+        std::fprintf(stderr,
+            "[Block Cache] sst=%" PRIu64 " lvl=%d block_off=%" PRIu64 " cache=%s io=%d status=%s\n",
+            rep_->sst_number_for_tracing(),
+            rep_->level_for_tracing(),
+            v.handle.offset(),
+            cache_hit ? "HIT" : "MISS",
+            did_io ? 1 : 0,
+            biter.status().ToString().c_str());
+        std::fflush(stderr);
+      }
 
       if (no_io && biter.status().IsIncomplete()) {
         // couldn't get block from block_cache
@@ -2517,6 +2548,16 @@ Status BlockBasedTable::Get(const ReadOptions& read_options, const Slice& key,
           }
         }
         s = biter.status();
+        // [logging 추가] - 읽어온 data block 내 target key 존재 여부
+        if (const char* p = std::getenv("TRACE_DATA"); p && p[0] == '1') {
+          std::fprintf(stderr,
+              "[DATA-END] sst=%" PRIu64 " lvl=%d block_off=%" PRIu64 " found=%d\n",
+              rep_->sst_number_for_tracing(),
+              rep_->level_for_tracing(),
+              v.handle.offset(),
+              does_referenced_key_exist ? 1 : 0);
+          std::fflush(stderr);
+        }
       }
       // Write the block cache access record.
       if (block_cache_tracer_ && block_cache_tracer_->is_tracing_enabled()) {
