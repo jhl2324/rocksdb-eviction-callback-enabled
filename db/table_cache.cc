@@ -653,14 +653,16 @@ Status TableCache::Get(
       // [Hybrid 기법 위한 수정] - I/O 여부 계산
       did_io = (ROCKSDB_NAMESPACE::get_perf_context()->block_read_count > old_reads);
       
-      if (KVCP_IsTraceEnabled()) {
+      if (KVCP_IsHybridEnabled() && KVCP_IsTraceEnabled()) {
+        Slice uk = ExtractUserKey(k);
+        KVCPKeyCtx kvcp_ctx{/*db_ptr=*/nullptr, /*cf_id=*/0, /*user_key=*/uk};
         uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
         uint32_t cached_cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
         uint32_t th  = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
-        std::string key_hex = user_key.ToString(true);
+        std::string key_hex = uk.ToString(true);
         
         std::fprintf(stderr,
-               "[AFTER Block Cache / I/O] " "key=%s inv=%u th=%u cnt=%u s.ok=%d did_io=%d\n",
+               "[AFTER Block Cache / I/O] key=%s inv=%u th=%u cnt=%u s.ok=%d did_io=%d\n",
                 key_hex.c_str(), inv, th, cached_cnt,
                 s.ok() ? 1 : 0,
                 did_io ? 1 : 0);
