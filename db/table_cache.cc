@@ -671,7 +671,7 @@ Status TableCache::Get(
     if (s.ok()) {
       // block cache hit counter (block cache 조회 전)
       auto cs_before = get_context->get_context_stats_;
-      std::string verdict = nullptr;
+      std::string verdict;
 
       get_context->SetReplayLog(row_cache_entry);  // nullptr if no cache.
       s = t->Get(options, k, get_context, prefix_extractor.get(), skip_filters);
