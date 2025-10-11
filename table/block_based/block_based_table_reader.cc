@@ -360,11 +360,33 @@ Cache::Handle* BlockBasedTable::GetEntryFromCache(
     const Cache::CacheItemHelper* cache_helper,
     const Cache::CreateCallback& create_cb, Cache::Priority priority) const {
   Cache::Handle* cache_handle = nullptr;
+
+  const char* tr = std::getenv("BLOCK_TRACE");
+  const bool trace_on = (tr && tr[0] == '1');
+  if (trace_on) {
+    const char* tname = "";
+    switch (block_type) {
+      case BlockType::kData:  tname = "DATA";  break;
+      case BlockType::kIndex: tname = "INDEX"; break;
+      case BlockType::kFilter:tname = "FILTER";break;
+      case BlockType::kCompressionDictionary: tname = "CDICT"; break;
+      default: tname = "OTHER"; break;
+    }
+    std::fprintf(stderr,
+      "[BCACHE] lookup start type=%s keylen=%zu tier=%d\n",
+      tname, key.size(), static_cast<int>(cache_tier));
+  }    
+
   if (cache_tier == CacheTier::kNonVolatileBlockTier) {
     cache_handle = block_cache->Lookup(key, cache_helper, create_cb, priority,
                                        wait, rep_->ioptions.statistics.get());
   } else {
     cache_handle = block_cache->Lookup(key, rep_->ioptions.statistics.get());
+  }
+
+  if (trace_on) {
+    std::fprintf(stderr, "[BCACHE] lookup end   %s\n",
+                 cache_handle ? "HIT" : "MISS");
   }
 
   if (cache_handle != nullptr) {
@@ -1202,12 +1224,24 @@ Status BlockBasedTable::GetDataBlockFromCache(
   // If not found, search from the compressed block cache.
   assert(block->IsEmpty());
 
+  // [logging 추가]
+  const char* tr = std::getenv("BLOCK_TRACE");
+  const bool trace_on = (tr && tr[0] == '1');
+
   if (block_cache_compressed == nullptr) {
     return s;
   }
 
   assert(!cache_key.empty());
   BlockContents contents;
+
+  // [logging 추가]
+  if (trace_on) {
+    std::fprintf(stderr,
+      "[BCACHE_COMP] lookup start keylen=%zu\n",
+      cache_key.size());
+  }
+
   if (rep_->ioptions.lowest_used_cache_tier ==
       CacheTier::kNonVolatileBlockTier) {
     Cache::CreateCallback create_cb_special = GetCreateCallback<BlockContents>(
@@ -1219,6 +1253,12 @@ Status BlockBasedTable::GetDataBlockFromCache(
   } else {
     block_cache_compressed_handle =
         block_cache_compressed->Lookup(cache_key, statistics);
+  }
+
+  // [logging 추가]
+  if (trace_on) {
+    std::fprintf(stderr, "[BCACHE_COMP] lookup end %s\n",
+                 block_cache_compressed_handle ? "HIT" : "MISS");
   }
 
   // if we found in the compressed cache, then uncompress and insert into
@@ -1238,10 +1278,24 @@ Status BlockBasedTable::GetDataBlockFromCache(
   // Retrieve the uncompressed contents into a new buffer
   UncompressionContext context(compression_type);
   UncompressionInfo info(context, uncompression_dict, compression_type);
+
+  // [logging 추가]
+  if (trace_on) {
+    std::fprintf(stderr,
+      "[BCACHE_COMP] decompress start csize=%zu\n",
+      compressed_block->data.size());
+  }
+
   s = UncompressBlockContents(
       info, compressed_block->data.data(), compressed_block->data.size(),
       &contents, rep_->table_options.format_version, rep_->ioptions,
       GetMemoryAllocator(rep_->table_options));
+
+  // [logging 추가]
+  if (trace_on) {
+    std::fprintf(stderr, "[BCACHE_COMP] decompress end %s\n",
+                 s.ok() ? "OK" : s.ToString().c_str());
+  }
 
   // Insert uncompressed block into block cache, the priority is based on the
   // data block type.
@@ -2319,7 +2373,7 @@ void BlockBasedTable::FullFilterKeysMayMatch(
   }
 }
 
-// [point lookup flow 조사] - filter -> index -> data block 순 조회
+// [point lookup flow 조사] - 13. filter -> index -> data block 순 조회
 Status BlockBasedTable::Get(const ReadOptions& read_options, const Slice& key,
                             GetContext* get_context,
                             const SliceTransform* prefix_extractor,

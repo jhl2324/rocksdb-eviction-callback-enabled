@@ -565,7 +565,7 @@ Status TableCache::Get(
 
   // Check row cache if enabled. Since row cache does not currently store
   // sequence numbers, we cannot use it if we need to fetch the sequence.
-  // [point lookup flow 조사] - Row cache hit 조회 (Row cache 활성화 시만 진행)
+  // [point lookup flow 조사] - 11. Row cache hit 조회 (Row cache 활성화 시만 진행)
   if (ioptions_.row_cache && !get_context->NeedToReadSequence()) {
     auto user_key = ExtractUserKey(k);
     CreateRowCacheKeyPrefix(options, fd, k, get_context, row_cache_key);
@@ -644,7 +644,7 @@ Status TableCache::Get(
     }
     if (s.ok()) {
       get_context->SetReplayLog(row_cache_entry);  // nullptr if no cache.
-      // [point lookup flow 조사] - Block cache 및 I/O 조회
+      // [point lookup flow 조사] - 12. filter -> index -> data block Block cache 조회 & miss cache 시 I/O 조회
       // adapter 측에서 rocksdb::BlockBasedTableOptions table_options; => Block based table 사용
       // table/block_based/block_based_table_reader.cc의 BlockBasedTable::Get() 호출
       s = t->Get(options, k, get_context, prefix_extractor.get(), skip_filters);

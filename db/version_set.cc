@@ -1966,7 +1966,7 @@ void Version::MultiGetBlob(
   }
 }
 
-// [point lookup flow 조사] - MemTable miss 이후 조회 로직
+// [point lookup flow 조사] - 8. MemTable miss 이후 조회 로직
 void Version::Get(const ReadOptions& read_options, const LookupKey& k,
                   PinnableSlice* value, std::string* timestamp, Status* status,
                   MergeContext* merge_context,
@@ -2011,7 +2011,7 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
     pinned_iters_mgr->StartPinning();
   }
 
-  // [point lookup flow 조사] - FilePicker가 Level 0부터 candidate SST 찾는 과정 iterate
+  // [point lookup flow 조사] - 9. FilePicker가 Level 0부터 candidate SST 찾는 과정 iterate
   FilePicker fp(user_key, ikey, &storage_info_.level_files_brief_,
                 storage_info_.num_non_empty_levels_,
                 &storage_info_.file_indexer_, user_comparator(),
@@ -2032,7 +2032,8 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
         GetPerfLevel() >= PerfLevel::kEnableTimeExceptForMutex &&
         get_perf_context()->per_level_perf_context_enabled;
     StopWatchNano timer(clock_, timer_enabled /* auto_start */);
-    // [point lookup flow 조사] - Row cache -> Block cache -> I/O 순으로 key 조회
+    // [point lookup flow 조사] - 10. TableCache::Get() 호출
+    // Get()은 Row cache -> Block cache -> I/O 순으로 key 조회
     // TableCache::Get()은 table_cache.cc에서 구현
     *status = table_cache_->Get(
         read_options, *internal_comparator(), *f->file_metadata, ikey,

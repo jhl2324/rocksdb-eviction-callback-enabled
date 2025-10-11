@@ -1715,12 +1715,14 @@ ColumnFamilyHandle* DBImpl::PersistentStatsColumnFamily() const {
   return persist_stats_cf_handle_;
 }
 
+// [point lookup flow 조사] - 2. overloading 된 다른 Get 호출
 Status DBImpl::Get(const ReadOptions& read_options,
                    ColumnFamilyHandle* column_family, const Slice& key,
                    PinnableSlice* value) {
   return Get(read_options, column_family, key, value, /*timestamp=*/nullptr);
 }
 
+// [point lookup flow 조사] - 3. GetImpl 호출
 Status DBImpl::Get(const ReadOptions& read_options,
                    ColumnFamilyHandle* column_family, const Slice& key,
                    PinnableSlice* value, std::string* timestamp) {
@@ -1728,6 +1730,7 @@ Status DBImpl::Get(const ReadOptions& read_options,
   get_impl_options.column_family = column_family;
   get_impl_options.value = value;
   get_impl_options.timestamp = timestamp;
+  // GetImpl 호출
   Status s = GetImpl(read_options, key, get_impl_options);
   return s;
 }
@@ -1743,6 +1746,7 @@ class GetWithTimestampReadCallback : public ReadCallback {
 };
 }  // namespace
 
+// [point lookup flow 조사] - 4. GetImpl 호출
 Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
                        GetImplOptions& get_impl_options) {
   assert(get_impl_options.value != nullptr ||
@@ -1859,12 +1863,12 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
   bool done = false;
   std::string* timestamp =
       ucmp->timestamp_size() > 0 ? get_impl_options.timestamp : nullptr;
-  // [point lookup flow 조사] - Mutable / Immutable MemTable hit 조사
+  // [point lookup flow 조사] - 5. Mutable / Immutable MemTable hit 조사
   if (!skip_memtable) {
     s.SetLastLevel(-1);
     // Get value associated with key
     if (get_impl_options.get_value) {
-      // [point lookup flow 조사] - Mutable MemTable hit인 경우
+      // [point lookup flow 조사] - 5-1. Mutable MemTable hit인 경우
       if (sv->mem->Get(lkey, get_impl_options.value->GetSelf(), timestamp, &s,
                        &merge_context, &max_covering_tombstone_seq,
                        read_options, get_impl_options.callback,
@@ -1873,7 +1877,14 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
         get_impl_options.value->PinSelf();
         s.SetLastLevel(-1);
         RecordTick(stats_, MEMTABLE_HIT);
-      // [point lookup flow 조사] - Immutable MemTable hit인 경우
+        ////
+        Slice uk = ExtractUserKey(k);
+        std::string key_hex = uk.ToString(true);
+        
+        std::fprintf(stderr," [Mutable MemTable hit] key=%s\n", key_hex.c_str())
+        std::fflush(stderr);
+        ////
+      // [point lookup flow 조사] - 5-2. Immutable MemTable hit인 경우
       } else if ((s.ok() || s.IsMergeInProgress()) &&
                  sv->imm->Get(lkey, get_impl_options.value->GetSelf(),
                               timestamp, &s, &merge_context,
@@ -1884,6 +1895,13 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
         get_impl_options.value->PinSelf();
         s.SetLastLevel(-1);
         RecordTick(stats_, MEMTABLE_HIT);
+        ////
+        Slice uk = ExtractUserKey(k);
+        std::string key_hex = uk.ToString(true);
+        
+        std::fprintf(stderr," [Immutable MemTable hit] key=%s\n", key_hex.c_str())
+        std::fflush(stderr);
+        ////
       }
     } else {
       // Get Merge Operands associated with key, Merge Operands should not be
@@ -1909,10 +1927,17 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
     }
   }
   PinnedIteratorsManager pinned_iters_mgr;
-  // [point lookup flow 조사] - MemTable miss인 경우
+  // [point lookup flow 조사] - 6. MemTable miss인 경우
   if (!done) {
     PERF_TIMER_GUARD(get_from_output_files_time);
-    // [point lookup flow 조사] - db/version_set.cc 내 정의된 Version::Get() 호출
+    ////
+        Slice uk = ExtractUserKey(k);
+        std::string key_hex = uk.ToString(true);
+        
+        std::fprintf(stderr," [MemTable miss] key=%s\n", key_hex.c_str())
+        std::fflush(stderr);
+    ////
+    // [point lookup flow 조사] - 7. db/version_set.cc 내 정의된 Version::Get() 호출
     sv->current->Get(
         read_options, lkey, get_impl_options.value, timestamp, &s,
         &merge_context, &max_covering_tombstone_seq, &pinned_iters_mgr,
