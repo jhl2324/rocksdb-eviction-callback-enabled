@@ -67,13 +67,19 @@ static inline void LogHybridChoice(const ImmutableOptions& iopts,
 
   std::string key_hex = user_key.ToString(true);
 
-  ROCKS_LOG_INFO(iopts.info_log,
+  /*
+    ROCKS_LOG_INFO(iopts.info_log,
                 "[HYBRID] %s thread_id=%" PRIu64 " key=%s inv=%u th=%u",
                 tag,
                 tid,
                 key_hex.c_str(),
                 inv,
                 th);
+  */
+  std::fprintf(stderr,
+               "[HYBRID] %s thread_id=%" PRIu64 " key=%s inv=%u th=%u\n",
+               tag, tid, key_hex.c_str(), inv, th);
+  std::fflush(stderr);
 }
 
 template <class T>
@@ -157,9 +163,10 @@ static void DeleteRowCacheEntry(const Slice& key, void* value) {
           uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
           uint32_t th  = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
           std::string key_hex = user_key.ToString(true);
-          ROCKS_LOG_INFO(entry->info_log,
-                         "[HYBRID] %s key=%s inv=%u th=%u",
-                         "EVICT", key_hex.c_str(), inv, th);
+          std::fprintf(stderr,
+               "[HYBRID] %s key=%s inv=%u th=%u\n",
+               "EVICT", key_hex.c_str(), inv, th);
+          std::fflush(stderr);
         }
       }
     } else {
