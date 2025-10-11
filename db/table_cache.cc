@@ -39,6 +39,7 @@
 #include <thread>
 #include <iomanip>
 #include <sstream>
+#include <cinttypes>
 #ifdef __linux__
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -56,17 +57,23 @@ static inline void LogHybridChoice(const ImmutableOptions& iopts,
   if (!KVCP_IsTraceEnabled()) return;
   if (!iopts.info_log) return;
   #ifdef __linux__
-    // Linux: 커널 TID
-    uint32_t tid = static_cast<uint32_t>(::syscall(SYS_gettid));
+    // Linux: 커널 TID (long 반환 → 64비트로 올림)
+    uint64_t tid = static_cast<uint64_t>(::syscall(SYS_gettid));
   #else
-    // 기타 플랫폼: thread::id 해시로 가짜 정수화
-    auto tid = static_cast<unsigned long long>(
+    // 기타 플랫폼: thread::id 해시를 64비트로
+    uint64_t tid = static_cast<uint64_t>(
         std::hash<std::thread::id>{}(std::this_thread::get_id()));
   #endif
+
   std::string key_hex = user_key.ToString(true);
+
   ROCKS_LOG_INFO(iopts.info_log,
-                 "[HYBRID] %s thread_id=%u key=%s inv=%u th=%u",
-                 tid, tag, key_hex.c_str(), inv, th);
+                "[HYBRID] %s thread_id=%" PRIu64 " key=%s inv=%u th=%u",
+                tag,
+                tid,
+                key_hex.c_str(),
+                inv,
+                th);
 }
 
 template <class T>
