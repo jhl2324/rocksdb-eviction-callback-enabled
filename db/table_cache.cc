@@ -671,7 +671,6 @@ Status TableCache::Get(
     if (s.ok()) {
       // block cache hit counter (block cache 조회 전)
       auto cs_before = get_context->get_context_stats_;
-      std::string verdict;
 
       get_context->SetReplayLog(row_cache_entry);  // nullptr if no cache.
       s = t->Get(options, k, get_context, prefix_extractor.get(), skip_filters);
@@ -680,42 +679,44 @@ Status TableCache::Get(
       // block cache hit counter (block cache 조회 후)
       auto cs_after = get_context->get_context_stats_;
 
+      // I/O로 읽은 data block 수
       uint64_t d_data_read = 0;
+      // Block cache hit 된 data block 수
       uint64_t d_data_hit  = 0;
       if (cs_after.num_data_read >= cs_before.num_data_read)
         d_data_read = cs_after.num_data_read - cs_before.num_data_read;
       if (cs_after.num_cache_data_hit >= cs_before.num_cache_data_hit)
         d_data_hit = cs_after.num_cache_data_hit - cs_before.num_cache_data_hit;
       
-      // case 별 분류
+      bool found = (get_context->State() == GetContext::GetState::kFound);
+      // 총 읽은 data block 수
+      uint64_t blocks_accessed = d_data_read + d_data_hit;
+
+      const char* verdict = " ";
       if (d_data_read > 0) {
-        // data block 조회 => Block cache miss
-        verdict = "BCACHE_MISS_IO";
+        verdict = found ? "MISS_IO_FOUND" : "MISS_IO_NOT_FOUND";
       } else if (d_data_hit > 0) {
-        // data block 조회 => Block cache hit
-        verdict = "BCACHE_HIT";
-        // Bloom filter False로 인해 data block 조회 skip
+        verdict = found ? "HIT_FOUND" : "HIT_NOT_FOUND";
       } else {
-        verdict = "NO_DATA_BLOCK_ACCESS";
+        verdict = found ? "NO_DATA_ACCESS_FOUND" : "NO_DATA_ACCESS_NOT_FOUND";
       }
 
-      if (KVCP_IsHybridEnabled() && KVCP_IsTraceEnabled()) {
-        Slice uk = ExtractUserKey(k);
-        KVCPKeyCtx kvcp_ctx{/*db_ptr=*/nullptr, /*cf_id=*/0, /*user_key=*/uk};
-        uint32_t inv        = KVCP_GetInvalidationCount(kvcp_ctx);
-        uint32_t cached_cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
-        uint32_t th         = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
-        std::string key_hex = uk.ToString(true);
+      // Data block 2개 이상 조회 시 verdict 접두사 추가
+      char verdict_buf[64];
+      if (blocks_accessed >= 2) {
+        std::snprintf(verdict_buf, sizeof(verdict_buf), "%s_MULTIBLOCK", verdict);
+        verdict = verdict_buf;
+      }
 
-        std::fprintf(stderr,
-          "[AFTER Block Cache / I/O] lvl=%d file=%" PRIu64
-          " key=%s inv=%u th=%u cnt=%u s.ok=%d d_data_read=%" PRIu64
-          " d_data_hit=%" PRIu64 " verdict=%s\n",
-          level, file_meta.fd.GetNumber(),
-          key_hex.c_str(), inv, th, cached_cnt,
-          s.ok() ? 1 : 0,
-          d_data_read, d_data_hit, verdict);
-        std::fflush(stderr);
+      std::fprintf(stderr,
+        "[AFTER Block Cache / I/O] lvl=%d file=%" PRIu64
+        " key=%s inv=%u th=%u cnt=%u s.ok=%d d_data_read=%" PRIu64
+        " d_data_hit=%" PRIu64 " blocks=%" PRIu64 " verdict=%s\n",
+        level, file_meta.fd.GetNumber(),
+        key_hex.c_str(), inv, th, cached_cnt,
+        s.ok() ? 1 : 0,
+        d_data_read, d_data_hit, blocks_accessed, verdict);
+      std::fflush(stderr);
       }
     }
   }
