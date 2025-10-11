@@ -53,7 +53,8 @@ static inline void LogHybridChoice(const ImmutableOptions& iopts,
                                    const char* tag,
                                    const Slice& user_key,
                                    uint32_t inv,
-                                   uint32_t th) {
+                                   uint32_t th,
+                                   uint32_t cache_cnt) {
   if (!KVCP_IsTraceEnabled()) return;
   if (!iopts.info_log) return;
   #ifdef __linux__
@@ -77,8 +78,8 @@ static inline void LogHybridChoice(const ImmutableOptions& iopts,
                 th);
   */
   std::fprintf(stderr,
-               "[HYBRID] %s thread_id=%" PRIu64 " key=%s inv=%u th=%u\n",
-               tag, tid, key_hex.c_str(), inv, th);
+               "[HYBRID] %s thread_id=%" PRIu64 " key=%s inv=%u th=%u cnt=%u\n",
+               tag, tid, key_hex.c_str(), inv, th, cache_cnt);
   std::fflush(stderr);
 }
 
@@ -161,11 +162,12 @@ static void DeleteRowCacheEntry(const Slice& key, void* value) {
         // trace on이면 직접 로그 (ioptions_ 접근하지 말고 entry->info_log 사용)
         if (KVCP_IsTraceEnabled()) {
           uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
+          uint32_t cached_cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
           uint32_t th  = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
           std::string key_hex = user_key.ToString(true);
           std::fprintf(stderr,
-               "[HYBRID] %s key=%s inv=%u th=%u\n",
-               "EVICT", key_hex.c_str(), inv, th);
+               "[HYBRID] %s key=%s inv=%u th=%u cnt=%u\n",
+               "EVICT", key_hex.c_str(), inv, th, cached_cnt);
           std::fflush(stderr);
         }
       }
@@ -573,8 +575,9 @@ Status TableCache::Get(
     if (done && KVCP_IsHybridEnabled()) {
       KVCPKeyCtx kvcp_ctx{/*db_ptr=*/nullptr, /*cf_id=*/0, /*user_key=*/user_key};
       uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
+      uint32_t cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
       uint32_t th  = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
-      LogHybridChoice(ioptions_, "ROW_HIT", user_key, inv, th);
+      LogHybridChoice(ioptions_, "ROW_HIT", user_key, inv, th, cnt);
     }
 
     // [Hybrid 기법 위한 수정] - Row cache miss 시 hash table 조회 및 갱신 수행
@@ -596,11 +599,11 @@ Status TableCache::Get(
           KVCP_OnRowCacheMiss(kvcp_ctx);  // invalidation_count 1 만큼 increment
           uint32_t inv_after = KVCP_GetInvalidationCount(kvcp_ctx);
 
-          LogHybridChoice(ioptions_, "MISS_INVALIDATED", user_key, inv_after, threshold);
+          LogHybridChoice(ioptions_, "MISS_INVALIDATED", user_key, inv_after, threshold, cached_cnt);
         } else {
           // (2) row cache에 없던 키 => cold miss
           // (정의상 invalidation_count는 증가시키지 않음)
-          LogHybridChoice(ioptions_, "MISS_NOT_CACHED", user_key, inv_before, threshold);
+          LogHybridChoice(ioptions_, "MISS_NOT_CACHED", user_key, inv_before, threshold, cached_cnt);
         }
       }
     }
@@ -699,8 +702,9 @@ Status TableCache::Get(
 
       {
         uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
+        uint32_t cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
         uint32_t th  = cache_invalidation_threshold;
-        LogHybridChoice(ioptions_, "MISS->MIGRATE", user_key, inv, th);
+        LogHybridChoice(ioptions_, "MISS->MIGRATE", user_key, inv, th, cnt);
       }
 
     } else {
@@ -730,8 +734,9 @@ Status TableCache::Get(
 
         {
           uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
+          uint32_t cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
           uint32_t th = cache_invalidation_threshold;
-          LogHybridChoice(ioptions_, "MISS->ROW_INSERT", user_key, inv, th);
+          LogHybridChoice(ioptions_, "MISS->ROW_INSERT", user_key, inv, th, cnt);
         }
       }
     }
