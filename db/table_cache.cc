@@ -599,11 +599,11 @@ Status TableCache::Get(
           KVCP_OnRowCacheMiss(kvcp_ctx);  // invalidation_count 1 만큼 increment
           uint32_t inv_after = KVCP_GetInvalidationCount(kvcp_ctx);
 
-          LogHybridChoice(ioptions_, "MISS_INVALIDATED", user_key, inv_after, threshold, cached_cnt);
+          LogHybridChoice(ioptions_, "ROW_MISS_INVALIDATED", user_key, inv_after, threshold, cached_cnt);
         } else {
           // (2) row cache에 없던 키 => cold miss
           // (정의상 invalidation_count는 증가시키지 않음)
-          LogHybridChoice(ioptions_, "MISS_NOT_CACHED", user_key, inv_before, threshold, cached_cnt);
+          LogHybridChoice(ioptions_, "ROW_MISS_NOT_CACHED", user_key, inv_before, threshold, cached_cnt);
         }
       }
     }
@@ -652,6 +652,12 @@ Status TableCache::Get(
 
       // [Hybrid 기법 위한 수정] - I/O 여부 계산
       did_io = (ROCKSDB_NAMESPACE::get_perf_context()->block_read_count > old_reads);
+      
+      std::fprintf(stderr,
+               "[AFTER Block Cache / I/O] " "key=%s inv=%u th=%u cnt=%u\n",
+                key_hex.c_str(), inv, th, cached_cnt);
+      std::fflush(stderr);
+
     } else if (options.read_tier == kBlockCacheTier && s.IsIncomplete()) {
       // Couldn't find Table in cache but treat as kFound if no_io set
       get_context->MarkKeyMayExist();
@@ -704,7 +710,7 @@ Status TableCache::Get(
         uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
         uint32_t cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
         uint32_t th  = cache_invalidation_threshold;
-        LogHybridChoice(ioptions_, "MISS->MIGRATE", user_key, inv, th, cnt);
+        LogHybridChoice(ioptions_, "ROW_INSERT_SKIP -> MIGRATE", user_key, inv, th, cnt);
       }
 
     } else {
@@ -736,7 +742,7 @@ Status TableCache::Get(
           uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
           uint32_t cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
           uint32_t th = cache_invalidation_threshold;
-          LogHybridChoice(ioptions_, "MISS->ROW_INSERT", user_key, inv, th, cnt);
+          LogHybridChoice(ioptions_, "ROW_INSERT", user_key, inv, th, cnt);
         }
       }
     }
