@@ -77,6 +77,7 @@ static inline void LogHybridChoice(const ImmutableOptions& iopts,
                 inv,
                 th);
   */
+
   std::fprintf(stderr,
                "[HYBRID] %s thread_id=%" PRIu64 " key=%s inv=%u th=%u cnt=%u\n",
                tag, tid, key_hex.c_str(), inv, th, cache_cnt);
@@ -566,6 +567,8 @@ Status TableCache::Get(
   // Check row cache if enabled. Since row cache does not currently store
   // sequence numbers, we cannot use it if we need to fetch the sequence.
   // [point lookup flow 조사] - 11. Row cache hit 조회 (Row cache 활성화 시만 진행)
+  // row_cache_key는 CreateRowCacheKeyPrefix()에서 row cache id, sst id, seq no를 붙인
+  // prefix임
   if (ioptions_.row_cache && !get_context->NeedToReadSequence()) {
     auto user_key = ExtractUserKey(k);
     CreateRowCacheKeyPrefix(options, fd, k, get_context, row_cache_key);
@@ -577,7 +580,14 @@ Status TableCache::Get(
       uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
       uint32_t cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
       uint32_t th  = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
-      LogHybridChoice(ioptions_, "ROW_HIT", user_key, inv, th, cnt);
+      std::string key_hex = user_key.ToString(true);
+      //LogHybridChoice(ioptions_, "ROW_HIT", user_key, inv, th, cnt);
+      std::fprintf(stderr,
+        "[ROW_HIT] lvl=%d file=%" PRIu64
+        " key=%s inv=%u th=%u cnt=%u \n",
+        level, file_meta.fd.GetNumber(),
+        key_hex.c_str(), inv, th, cnt);
+      std::fflush(stderr);
     }
 
     // [Hybrid 기법 위한 수정] - Row cache miss 시 hash table 조회 및 갱신 수행
@@ -590,20 +600,33 @@ Status TableCache::Get(
         KVCPKeyCtx kvcp_ctx{/*db_ptr=*/nullptr, /*cf_id=*/0, /*user_key=*/user_key};
 
         // 현재 해시 테이블에 이 키를 row cache에 담았던 적이 있는지 확인
-        uint32_t cached_cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
-        uint32_t inv_before = KVCP_GetInvalidationCount(kvcp_ctx);
-        uint32_t threshold = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
+        uint32_t cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
+        uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
+        uint32_t th = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
+        std::string key_hex = user_key.ToString(true);
 
-        if (cached_cnt > 0) {
+        if (cnt > 0) {
           // (1) 과거에 row cache에 있었던 키 => invalidation에 의한 miss
           KVCP_OnRowCacheMiss(kvcp_ctx);  // invalidation_count 1 만큼 increment
           uint32_t inv_after = KVCP_GetInvalidationCount(kvcp_ctx);
 
-          LogHybridChoice(ioptions_, "ROW_MISS_INVALIDATED", user_key, inv_after, threshold, cached_cnt);
+          // LogHybridChoice(ioptions_, "ROW_MISS_INVALIDATED", user_key, inv_after, threshold, cached_cnt);
+          std::fprintf(stderr,
+            "[ROW_MISS_INVALIDATED] lvl=%d file=%" PRIu64
+            " key=%s inv=%u->%u th=%u cnt=%u\n",
+            level, file_meta.fd.GetNumber(),
+            key_hex.c_str(), inv, inv_after, th, cnt);
+          std::fflush(stderr);
         } else {
           // (2) row cache에 없던 키 => cold miss
           // (정의상 invalidation_count는 증가시키지 않음)
-          LogHybridChoice(ioptions_, "ROW_MISS_NOT_CACHED", user_key, inv_before, threshold, cached_cnt);
+          // LogHybridChoice(ioptions_, "ROW_MISS_NOT_CACHED", user_key, inv_before, threshold, cached_cnt);
+          std::fprintf(stderr,
+            "[ROW_MISS_NOT_CACHED] lvl=%d file=%" PRIu64
+            " key=%s inv=%u th=%u cnt=%u\n",
+            level, file_meta.fd.GetNumber(),
+            key_hex.c_str(), inv, th, cnt);
+          std::fflush(stderr);
         }
       }
     }
@@ -734,7 +757,14 @@ Status TableCache::Get(
         uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
         uint32_t cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
         uint32_t th  = cache_invalidation_threshold;
-        LogHybridChoice(ioptions_, "ROW_INSERT_SKIP -> MIGRATE", user_key, inv, th, cnt);
+        std::string key_hex = user_key.ToString(true);
+        // LogHybridChoice(ioptions_, "ROW_INSERT_SKIP -> MIGRATE", user_key, inv, th, cnt);
+        std::fprintf(stderr,
+          "[ROW_INSERT_SKIP] lvl=%d file=%" PRIu64
+          " key=%s inv=%u th=%u cnt=%u\n",
+          level, file_meta.fd.GetNumber(),
+          key_hex.c_str(), inv, th, cnt);
+        std::fflush(stderr);
       }
 
     } else {
@@ -766,7 +796,14 @@ Status TableCache::Get(
           uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
           uint32_t cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
           uint32_t th = cache_invalidation_threshold;
-          LogHybridChoice(ioptions_, "ROW_INSERT", user_key, inv, th, cnt);
+          std::string key_hex = user_key.ToString(true);
+          // LogHybridChoice(ioptions_, "ROW_INSERT", user_key, inv, th, cnt);
+          std::fprintf(stderr,
+            "[ROW_INSERT] lvl=%d file=%" PRIu64
+            " key=%s inv=%u th=%u cnt=%u\n",
+            level, file_meta.fd.GetNumber(),
+            key_hex.c_str(), inv, th, cnt);
+          std::fflush(stderr);
         }
       }
     }
