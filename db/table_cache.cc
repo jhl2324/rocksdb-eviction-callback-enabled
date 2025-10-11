@@ -662,10 +662,10 @@ Status TableCache::Get(
         std::string key_hex = uk.ToString(true);
         
         std::fprintf(stderr,
-               "[AFTER Block Cache / I/O] key=%s inv=%u th=%u cnt=%u s.ok=%d did_io=%d\n",
-                key_hex.c_str(), inv, th, cached_cnt,
-                s.ok() ? 1 : 0,
-                did_io ? 1 : 0);
+                "[AFTER Block Cache / I/O] lvl=%d file=%" PRIu64 " key=%s inv=%u th=%u cnt=%u s.ok=%d did_io=%d\n",
+                level, file_meta.fd.GetNumber(), key_hex.c_str(), inv, th, cached_cnt,
+                s.ok() ? 1:0,
+                did_io ? 1:0);
         std::fflush(stderr);
       }
 
