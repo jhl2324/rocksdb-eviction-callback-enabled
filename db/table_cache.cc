@@ -36,6 +36,13 @@
 #include "util/coding.h"
 #include "util/stop_watch.h"
 
+#include <thread>
+#include <iomanip>
+#include <sstream>
+#ifdef __linux__
+#include <sys/syscall.h>
+#include <unistd.h>
+
 namespace ROCKSDB_NAMESPACE {
 
 namespace {
@@ -47,10 +54,18 @@ static inline void LogHybridChoice(const ImmutableOptions& iopts,
                                    uint32_t th) {
   if (!KVCP_IsTraceEnabled()) return;
   if (!iopts.info_log) return;
+  #ifdef __linux__
+    // Linux: 커널 TID
+    uint32_t tid = static_cast<uint32_t>(::syscall(SYS_gettid));
+  #else
+    // 기타 플랫폼: thread::id 해시로 가짜 정수화
+    auto tid = static_cast<unsigned long long>(
+        std::hash<std::thread::id>{}(std::this_thread::get_id()));
+  #endif
   std::string key_hex = user_key.ToString(true);
   ROCKS_LOG_INFO(iopts.info_log,
-                 "[HYBRID] %s key=%s inv=%u th=%u",
-                 tag, key_hex.c_str(), inv, th);
+                 "[HYBRID] %s thread_id=%u key=%s inv=%u th=%u",
+                 tid, tag, key_hex.c_str(), inv, th);
 }
 
 template <class T>
