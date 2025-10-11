@@ -613,8 +613,11 @@ Status TableCache::Get(
   TableReader* t = fd.table_reader;
   Cache::Handle* handle = nullptr;
 
-  // [Hybrid 기법 위한 수정] - I/O 여부 판단에 사용할 카운터 스냅샷
+  // I/O 스냅샷 + block cache hit/miss 스냅샷
+  // get_perf_context => thread-local 이므로 동시성 상황에서도 로직 문제 없음
   uint64_t old_reads = ROCKSDB_NAMESPACE::get_perf_context()->block_read_count;
+  uint64_t old_bchit  = ROCKSDB_NAMESPACE::get_perf_context()->block_cache_hit_count;
+  uint64_t old_bcmiss = ROCKSDB_NAMESPACE::get_perf_context()->block_cache_miss_count;
   bool did_io = false;
 
   if (!done) {
@@ -642,38 +645,55 @@ Status TableCache::Get(
             range_del_iter->MaxCoveringTombstoneSeqnum(ExtractUserKey(k)));
       }
     }
+
     if (s.ok()) {
       get_context->SetReplayLog(row_cache_entry);  // nullptr if no cache.
-      // [point lookup flow 조사] - 12. filter -> index -> data block Block cache 조회 & miss cache 시 I/O 조회
-      // adapter 측에서 rocksdb::BlockBasedTableOptions table_options; => Block based table 사용
-      // table/block_based/block_based_table_reader.cc의 BlockBasedTable::Get() 호출
       s = t->Get(options, k, get_context, prefix_extractor.get(), skip_filters);
       get_context->SetReplayLog(nullptr);
 
-      // [Hybrid 기법 위한 수정] - I/O 여부 계산
+      // I/O 발생 여부
+      // 현재 BILSM처럼 cache_index_and_filter_blocks 옵션을 활성화한 상태
+      // 따라서, filter / index / data block 중 하나라도 block cache에 cached 되지 않은 경우 did_io = true
       did_io = (ROCKSDB_NAMESPACE::get_perf_context()->block_read_count > old_reads);
-      
+
+      uint64_t new_bchit  = ROCKSDB_NAMESPACE::get_perf_context()->block_cache_hit_count;
+      uint64_t new_bcmiss = ROCKSDB_NAMESPACE::get_perf_context()->block_cache_miss_count;
+      uint64_t d_hit  = (new_bchit  >= old_bchit)  ? (new_bchit  - old_bchit)  : 0;
+      uint64_t d_miss = (new_bcmiss >= old_bcmiss) ? (new_bcmiss - old_bcmiss) : 0;
+
+      const char* bc_verdict = "NO_BLOCK_ACCESS";
+      if (d_miss > 0) {
+        // miss가 있으면 miss 우선 (read_tier==kBlockCacheTier면 did_io는 0일 수 있음)
+        bc_verdict = "BCACHE_MISS";
+      } else if (d_hit > 0) {
+        bc_verdict = "BCACHE_HIT";
+      } else {
+        // 히트/미스 모두 0:
+        // 블룸이 false여서 블록 접근 자체가 없었거나
+        // row_cache로 처리된 경우(여긴 !done 분기라 row_cache-hit은 아님)
+        // 호은 이미 상위 레벨에서 판별
+        bc_verdict = "NO_BLOCK_ACCESS";
+      }
+
       if (KVCP_IsHybridEnabled() && KVCP_IsTraceEnabled()) {
         Slice uk = ExtractUserKey(k);
         KVCPKeyCtx kvcp_ctx{/*db_ptr=*/nullptr, /*cf_id=*/0, /*user_key=*/uk};
-        uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
+        uint32_t inv        = KVCP_GetInvalidationCount(kvcp_ctx);
         uint32_t cached_cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
-        uint32_t th  = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
+        uint32_t th         = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
         std::string key_hex = uk.ToString(true);
-        
+
         std::fprintf(stderr,
-                "[AFTER Block Cache / I/O] lvl=%d file=%" PRIu64 " key=%s inv=%u th=%u cnt=%u s.ok=%d did_io=%d\n",
-                level, file_meta.fd.GetNumber(), key_hex.c_str(), inv, th, cached_cnt,
-                s.ok() ? 1:0,
-                did_io ? 1:0);
+          "[AFTER Block Cache / I/O] lvl=%d file=%" PRIu64
+          " key=%s inv=%u th=%u cnt=%u s.ok=%d did_io=%d bc_d_hit=%" PRIu64
+          " bc_d_miss=%" PRIu64 " verdict=%s\n",
+          level, file_meta.fd.GetNumber(),
+          key_hex.c_str(), inv, th, cached_cnt,
+          s.ok() ? 1 : 0,
+          did_io ? 1 : 0,
+          d_hit, d_miss, bc_verdict);
         std::fflush(stderr);
       }
-
-    } else if (options.read_tier == kBlockCacheTier && s.IsIncomplete()) {
-      // Couldn't find Table in cache but treat as kFound if no_io set
-      get_context->MarkKeyMayExist();
-      s = Status::OK();
-      done = true;
     }
   }
 
