@@ -605,9 +605,19 @@ Status TableCache::Get(
         uint32_t th = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
         std::string key_hex = user_key.ToString(true);
 
+        bool first_rc_miss =
+          (options.row_cache_miss_accounted == nullptr) ||
+          (*(options.row_cache_miss_accounted) == false);
+
         if (cnt > 0) {
           // (1) 과거에 row cache에 있었던 키 => invalidation에 의한 miss
-          KVCP_OnRowCacheMiss(kvcp_ctx);  // invalidation_count 1 만큼 increment
+          if (first_rc_miss){
+            KVCP_OnRowCacheMiss(kvcp_ctx);  // invalidation_count 1 만큼 increment
+            if (options.row_cache_miss_accounted){
+              *(options.row_cache_miss_accounted) = true;
+            }
+          }
+          
           uint32_t inv_after = KVCP_GetInvalidationCount(kvcp_ctx);
 
           // LogHybridChoice(ioptions_, "ROW_MISS_INVALIDATED", user_key, inv_after, threshold, cached_cnt);

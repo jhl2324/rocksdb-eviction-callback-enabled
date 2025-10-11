@@ -1632,6 +1632,9 @@ struct ReadOptions {
     // false => Cache hit로 I/O 수행 X || I/O 수행 && Row cache caching O
   bool* out_row_cache_skipped_on_io = nullptr;
 
+  // 조회 당 최대 1번의 invalidation count increment가 가능하도록 하기 위해 도입
+  bool* row_cache_miss_accounted = nullptr;
+
   ReadOptions();
   ReadOptions(bool cksum, bool cache);
 };
