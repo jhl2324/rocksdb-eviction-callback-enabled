@@ -15,6 +15,8 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include <cstdio>
+#include <cstdlib>
 
 #include "cache/cache_entry_roles.h"
 #include "cache/cache_key.h"

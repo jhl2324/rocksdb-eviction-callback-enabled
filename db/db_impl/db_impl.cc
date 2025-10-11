@@ -1877,11 +1877,10 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
         get_impl_options.value->PinSelf();
         s.SetLastLevel(-1);
         RecordTick(stats_, MEMTABLE_HIT);
+        // [logging 추가]
         ////
-        Slice uk = ExtractUserKey(k);
-        std::string key_hex = uk.ToString(true);
-        
-        std::fprintf(stderr," [Mutable MemTable hit] key=%s\n", key_hex.c_str())
+        std::string key_hex = key.ToString(true);
+        std::fprintf(stderr, "[Mutable MemTable hit] key=%s\n", key_hex.c_str());
         std::fflush(stderr);
         ////
       // [point lookup flow 조사] - 5-2. Immutable MemTable hit인 경우
@@ -1895,11 +1894,10 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
         get_impl_options.value->PinSelf();
         s.SetLastLevel(-1);
         RecordTick(stats_, MEMTABLE_HIT);
+        // [logging 추가]
         ////
-        Slice uk = ExtractUserKey(k);
-        std::string key_hex = uk.ToString(true);
-        
-        std::fprintf(stderr," [Immutable MemTable hit] key=%s\n", key_hex.c_str())
+        std::string key_hex = key.ToString(true);
+        std::fprintf(stderr, "[Immutable MemTable hit] key=%s\n", key_hex.c_str());
         std::fflush(stderr);
         ////
       }
@@ -1930,11 +1928,10 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
   // [point lookup flow 조사] - 6. MemTable miss인 경우
   if (!done) {
     PERF_TIMER_GUARD(get_from_output_files_time);
+    // [logging 추가]
     ////
-        Slice uk = ExtractUserKey(k);
-        std::string key_hex = uk.ToString(true);
-        
-        std::fprintf(stderr," [MemTable miss] key=%s\n", key_hex.c_str())
+        std::string key_hex = key.ToString(true);
+        std::fprintf(stderr, "[MemTable miss] key=%s\n", key_hex.c_str());
         std::fflush(stderr);
     ////
     // [point lookup flow 조사] - 7. db/version_set.cc 내 정의된 Version::Get() 호출
