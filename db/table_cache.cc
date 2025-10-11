@@ -42,6 +42,7 @@
 #ifdef __linux__
 #include <sys/syscall.h>
 #include <unistd.h>
+#endif
 
 namespace ROCKSDB_NAMESPACE {
 
