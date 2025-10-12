@@ -44,6 +44,8 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 #endif
+#include <cstdlib>
+#include <cstdio>
 
 namespace ROCKSDB_NAMESPACE {
 
