@@ -164,15 +164,6 @@ bool KVCP_IsHybridEnabled() {
   return g_kvcp_hybrid_enabled.load(std::memory_order_relaxed);
 }
 
-static std::atomic<bool> g_kvcp_trace_enabled{false};
-
-void KVCP_SetTraceEnabled(bool on) {
-  g_kvcp_trace_enabled.store(on, std::memory_order_relaxed);
-}
-bool KVCP_IsTraceEnabled() {
-  return g_kvcp_trace_enabled.load(std::memory_order_relaxed);
-}
-
 namespace {
 
     constexpr uint32_t kKVCPDefaultThreshold = 1;

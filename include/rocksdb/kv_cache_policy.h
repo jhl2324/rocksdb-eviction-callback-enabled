@@ -41,8 +41,4 @@ namespace ROCKSDB_NAMESPACE {
     void KVCP_SetHybridEnabled(bool on);
 
     bool KVCP_IsHybridEnabled();
-
-    void KVCP_SetTraceEnabled(bool on);
-    
-    bool KVCP_IsTraceEnabled();
 }
