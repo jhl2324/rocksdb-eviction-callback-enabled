@@ -168,8 +168,8 @@ static void DeleteRowCacheEntry(const Slice& key, void* value) {
           uint32_t th  = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
           std::string key_hex = user_key.ToString(true);
           std::fprintf(stderr,
-               "[EVICT] key=%s inv=%u th=%u cnt=%u\n",
-                key_hex.c_str(), inv, th, cached_cnt);
+               "[EVICT] file=%u key=%s inv=%u th=%u cnt=%u\n",
+                file_number, key_hex.c_str(), inv, th, cached_cnt);
           std::fflush(stderr);
         }
       }
@@ -817,18 +817,19 @@ Status TableCache::Get(
 
       // [Hybrid 기법 위한 수정] - Row cache에 넣은 경우 hash table 갱신
       if (KVCP_IsHybridEnabled()){
+        uint32_t old_cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
         KVCP_OnRowCacheInsert(kvcp_ctx);
         if (const char* p = std::getenv("ROW_INSERT_LOGGING"); p && p[0] == '1') {
           uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
-          uint32_t cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
+          uint32_t new_cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
           uint32_t th = cache_invalidation_threshold;
           std::string key_hex = user_key.ToString(true);
           // LogHybridChoice(ioptions_, "ROW_INSERT", user_key, inv, th, cnt);
           std::fprintf(stderr,
             "[ROW_INSERT] lvl=%d file=%" PRIu64
-            " key=%s inv=%u th=%u cnt=%u\n",
+            " key=%s inv=%u th=%u cnt=%u->%u\n",
             level, file_meta.fd.GetNumber(),
-            key_hex.c_str(), inv, th, cnt);
+            key_hex.c_str(), inv, th, old_cnt, new_cnt);
           std::fflush(stderr);
         }
       }

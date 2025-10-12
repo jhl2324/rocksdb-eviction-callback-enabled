@@ -51,10 +51,8 @@ namespace {
                 auto& sh = ShardRef(k);
                 std::lock_guard<std::mutex> lk(sh.mu);
                 auto it = sh.map.find(MakeKey(k));
-                if (it != sh.map.end()) {
-                if (it->second.cached_key_count > 0) {
+                if (it != sh.map.end() && it->second.cached_key_count > 0) {
                     ++it->second.invalidation_count;
-                }
                 }
             }
 
