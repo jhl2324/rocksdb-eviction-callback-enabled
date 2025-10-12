@@ -561,6 +561,23 @@ Status TableCache::Get(
     *(options.out_row_cache_skipped_on_io) = false;
   }
 
+  auto user_key = ExtractUserKey(k);
+  KVCPKeyCtx kvcp_ctx{/*db_ptr=*/nullptr, /*cf_id=*/0, /*user_key=*/user_key};
+  uint32_t inv = 0;
+  uint32_t cnt = 0;
+  uint32_t th  = 0;
+  std::string key_hex = user_key.ToString(true);
+  uint32_t cache_invalidation_threshold = 0;
+
+  if (KVCP_IsHybridEnabled()) {
+    inv = KVCP_GetInvalidationCount(kvcp_ctx);
+    cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
+    th  = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
+    key_hex = user_key.ToString(true);
+  }
+
+  bool exist_in_row_cache = false;
+
 #ifndef ROCKSDB_LITE
   IterKey row_cache_key;
   std::string row_cache_entry_buffer;
@@ -573,16 +590,12 @@ Status TableCache::Get(
   if (ioptions_.row_cache && !get_context->NeedToReadSequence()) {
     auto user_key = ExtractUserKey(k);
     CreateRowCacheKeyPrefix(options, fd, k, get_context, row_cache_key);
+    // Row cache hit 여부 조회
     done = GetFromRowCache(user_key, row_cache_key, row_cache_key.Size(),
                            get_context);
     
     if (done && KVCP_IsHybridEnabled()) {
       if (const char* p = std::getenv("ROW_HIT_LOGGING"); p && p[0] == '1') {
-        KVCPKeyCtx kvcp_ctx{/*db_ptr=*/nullptr, /*cf_id=*/0, /*user_key=*/user_key};
-        uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
-        uint32_t cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
-        uint32_t th  = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
-        std::string key_hex = user_key.ToString(true);
         //LogHybridChoice(ioptions_, "ROW_HIT", user_key, inv, th, cnt);
         std::fprintf(stderr,
           "[ROW_HIT] lvl=%d file=%" PRIu64
@@ -598,53 +611,8 @@ Status TableCache::Get(
     // Hash table 내부 invalidation_count를 1만큼 increment 수행하기
     if (!done) {
       row_cache_entry = &row_cache_entry_buffer;
-      
-      if (KVCP_IsHybridEnabled()) {
-        KVCPKeyCtx kvcp_ctx{/*db_ptr=*/nullptr, /*cf_id=*/0, /*user_key=*/user_key};
 
-        // 현재 해시 테이블에 이 키를 row cache에 담았던 적이 있는지 확인
-        uint32_t cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
-        uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
-        uint32_t th = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
-        std::string key_hex = user_key.ToString(true);
-
-        bool first_rc_miss =
-          (options.row_cache_miss_accounted == nullptr) ||
-          (*(options.row_cache_miss_accounted) == false);
-
-        if (cnt > 0) {
-          // (1) 과거에 row cache에 있었던 키 => invalidation에 의한 miss
-          if (first_rc_miss){
-            KVCP_OnRowCacheMiss(kvcp_ctx);  // invalidation_count 1 만큼 increment
-            if (options.row_cache_miss_accounted){
-              *(options.row_cache_miss_accounted) = true;
-            }
-          }
-
-          uint32_t inv_after = KVCP_GetInvalidationCount(kvcp_ctx);
-
-          if (const char* p = std::getenv("ROW_MISS_LOGGING"); p && p[0] == '1') {
-            std::fprintf(stderr,
-              "[ROW_MISS_INVALIDATED] lvl=%d file=%" PRIu64
-              " key=%s inv=%u->%u th=%u cnt=%u\n",
-              level, file_meta.fd.GetNumber(),
-              key_hex.c_str(), inv, inv_after, th, cnt);
-            std::fflush(stderr);
-          }
-        } else {
-          // (2) row cache에 없던 키 => cold miss
-          // (정의상 invalidation_count는 증가시키지 않음)
-          // LogHybridChoice(ioptions_, "ROW_MISS_NOT_CACHED", user_key, inv_before, threshold, cached_cnt);
-          if (const char* p = std::getenv("ROW_MISS_LOGGING"); p && p[0] == '1') {
-            std::fprintf(stderr,
-              "[ROW_MISS_NOT_CACHED] lvl=%d file=%" PRIu64
-              " key=%s inv=%u th=%u cnt=%u\n",
-              level, file_meta.fd.GetNumber(),
-              key_hex.c_str(), inv, th, cnt);
-            std::fflush(stderr);
-          }
-        }
-      }
+      exist_in_row_cache = (cnt > 0) ? true : false;
     }
   }
 #endif  // ROCKSDB_LITE
@@ -685,6 +653,9 @@ Status TableCache::Get(
       auto cs_before = get_context->get_context_stats_;
 
       get_context->SetReplayLog(row_cache_entry);  // nullptr if no cache.
+      /*
+        Block cache hit 조회 -> miss 시 I/O로 읽어오는 과정까지 포함
+      */
       s = t->Get(options, k, get_context, prefix_extractor.get(), skip_filters);
       get_context->SetReplayLog(nullptr);
 
@@ -706,11 +677,11 @@ Status TableCache::Get(
 
       const char* verdict = nullptr;
       if (d_data_read > 0) {
-        verdict = found ? "MISS_IO_FOUND" : "MISS_IO_NOT_FOUND";
+        verdict = found ? "BC_MISS_TARGET_KEY_FOUND" : "BC_MISS_TARGET_KEY_NOT_FOUND";
       } else if (d_data_hit > 0) {
-        verdict = found ? "HIT_FOUND" : "HIT_NOT_FOUND";
+        verdict = found ? "BC_HIT_TARGET_KEY_FOUND" : "BC_HIT_TARGET_KEY_NOT_FOUND";
       } else {
-        verdict = found ? "NO_DATA_ACCESS_FOUND" : "NO_DATA_ACCESS_NOT_FOUND";
+        verdict = found ? "NO_BC_CHECK_TARGET_KEY_FOUND" : "NO_BC_CHECK_TARGET_KEY_NOT_FOUND";
       }
 
       // Data block 2개 이상 조회 시 verdict 접두사 추가
@@ -721,19 +692,13 @@ Status TableCache::Get(
       }
 
       did_io = (d_data_read > 0);
-      Slice uk = ExtractUserKey(k);
-      KVCPKeyCtx kvcp_ctx{/*db_ptr=*/nullptr, /*cf_id=*/0, /*user_key=*/uk};
-      uint32_t inv        = KVCP_GetInvalidationCount(kvcp_ctx);
-      uint32_t cached_cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
-      uint32_t th         = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
-      std::string key_hex = uk.ToString(true);
 
       std::fprintf(stderr,
-        "[AFTER Block Cache / I/O] lvl=%d file=%" PRIu64
+        "[AFTER Block Cache Check] lvl=%d file=%" PRIu64
         " key=%s inv=%u th=%u cnt=%u s.ok=%d d_data_read=%" PRIu64
         " d_data_hit=%" PRIu64 " blocks=%" PRIu64 " verdict=%s\n",
         level, file_meta.fd.GetNumber(),
-        key_hex.c_str(), inv, th, cached_cnt,
+        key_hex.c_str(), inv, th, cnt,
         s.ok() ? 1 : 0,
         d_data_read, d_data_hit, blocks_accessed, verdict);
       std::fflush(stderr);
@@ -759,21 +724,39 @@ Status TableCache::Get(
       -> hash table에 key가 없었던 경우는 삽입
       -> hash table에 key가 있었던 경우는 갱신
   */
-  // 밑의 if 문에 migration 하는 것으로 결정된 경우 skip 하도록 조건 추가
-  // [Hybrid 기법 위한 수정] - context 및 threshold 초기화
-  const Slice user_key = ExtractUserKey(k);
-  uint32_t cache_invalidation_threshold = 0;
-  KVCPKeyCtx kvcp_ctx{/*db_ptr=*/nullptr, /*cf_id=*/0, /*user_key=*/user_key};
+
   if (KVCP_IsHybridEnabled()){
     cache_invalidation_threshold = KVCP_GetThreshold(/*db_ptr*/nullptr, /*cf_id*/0);
   }
 
   if (!done && s.ok() && row_cache_entry && !row_cache_entry->empty()) {
-    // [Hybrid 기법 위한 수정] - 해당 key에 대한 hash table 내 cache invalidation_count 값과
-    // threshold 비교해서 Migration vs Row cache 중 결정
-    // Cache miss & Hybrid 기법 & ShouldSkipRowCacheInsert 모두 true 일 때만
-    // MemTable caching은 Row cache 비활성화이므로 애초에 이 block 접근 안함
-    // Row caching은 cache miss 시 무조건 Row cache에 caching 하므로 
+    // Row cache miss 상황서 hash table에 해당 key 존재 하는 경우
+    if (exist_in_row_cache) {
+      // 해당 key의 hash table에서의 invalidation count 1만큼 increment
+      // 단, hash table 내 유일 & 직전 해당 key evict 시 처리하지 않음
+      bool invalidation_counting_status = KVCP_OnRowCacheInvalidation(kvcp_ctx);
+      uint32_t new_inv = KVCP_GetInvalidationCount(kvcp_ctx);
+      const char* p = std::getenv("INVALIDATION_COUNT_LOGGING");
+
+      if (invalidation_counting_status && p && p[0] == '1'){
+        if (invalidation_counting_status) {
+          std::fprintf(stderr,
+            "[INVALIDATION_COUNT_APPLIED] lvl=%d file=%" PRIu64
+            " key=%s inv=%u->%u th=%u cnt=%u\n",
+            level, file_meta.fd.GetNumber(),
+            key_hex.c_str(), inv, new_inv, th, cnt);
+          std::fflush(stderr);
+        } else {
+          std::fprintf(stderr,
+            "[INVALIDATION_COUNT_NOT_APPLIED (Removed just before)] lvl=%d file=%" PRIu64
+            " key=%s inv=%u->%u th=%u cnt=%u\n",
+            level, file_meta.fd.GetNumber(),
+            key_hex.c_str(), inv, new_inv, th, cnt);
+          std::fflush(stderr);
+        }
+      }
+    }
+
     if (did_io && KVCP_IsHybridEnabled() && KVCP_ShouldSkipRowCacheInsert(kvcp_ctx, cache_invalidation_threshold)) {
       // SKIP: Row cache에 넣지 않음 => 이후 adapter 측에서 migration 수행
       if (options.out_row_cache_skipped_on_io) {
@@ -781,19 +764,14 @@ Status TableCache::Get(
       }
 
       if (const char* p = std::getenv("ROW_INSERT_SKIP_LOGGING"); p && p[0] == '1') {
-        uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
-        uint32_t cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
-        uint32_t th  = cache_invalidation_threshold;
-        std::string key_hex = user_key.ToString(true);
         // LogHybridChoice(ioptions_, "ROW_INSERT_SKIP -> MIGRATE", user_key, inv, th, cnt);
         std::fprintf(stderr,
-          "[ROW_INSERT_SKIP] lvl=%d file=%" PRIu64
+          "[ROW_INSERT_SKIP_FOR_MIGRATION] lvl=%d file=%" PRIu64
           " key=%s inv=%u th=%u cnt=%u\n",
           level, file_meta.fd.GetNumber(),
           key_hex.c_str(), inv, th, cnt);
         std::fflush(stderr);
       }
-
     } else {
       // (Migration X) 기존 Row cache Insert 로직
       size_t charge = row_cache_key.Size() + row_cache_entry->size() +
@@ -817,19 +795,16 @@ Status TableCache::Get(
 
       // [Hybrid 기법 위한 수정] - Row cache에 넣은 경우 hash table 갱신
       if (KVCP_IsHybridEnabled()){
-        uint32_t old_cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
         KVCP_OnRowCacheInsert(kvcp_ctx);
         if (const char* p = std::getenv("ROW_INSERT_LOGGING"); p && p[0] == '1') {
-          uint32_t inv = KVCP_GetInvalidationCount(kvcp_ctx);
           uint32_t new_cnt = KVCP_GetCachedKeyCount(kvcp_ctx);
-          uint32_t th = cache_invalidation_threshold;
           std::string key_hex = user_key.ToString(true);
           // LogHybridChoice(ioptions_, "ROW_INSERT", user_key, inv, th, cnt);
           std::fprintf(stderr,
             "[ROW_INSERT] lvl=%d file=%" PRIu64
             " key=%s inv=%u th=%u cnt=%u->%u\n",
             level, file_meta.fd.GetNumber(),
-            key_hex.c_str(), inv, th, old_cnt, new_cnt);
+            key_hex.c_str(), inv, th, cnt, new_cnt);
           std::fflush(stderr);
         }
       }

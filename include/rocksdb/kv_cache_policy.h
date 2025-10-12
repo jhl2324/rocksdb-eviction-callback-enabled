@@ -13,7 +13,7 @@ namespace ROCKSDB_NAMESPACE {
 
     // Row cache lookup miss 직후 호출
     // 현재 entry가 존재하는 경우 cache invalidation 이므로 invalidation_count 1만큼 increment
-    void KVCP_OnRowCacheMiss(const KVCPKeyCtx& k);
+    bool KVCP_OnRowCacheInvalidation(const KVCPKeyCtx& k);
 
     // Row cache INSERT 직전 호출 => row cache insert skip (migration 수행) 여부 결정
     // invalidation_count >= threshold 이면 true => migration 수행

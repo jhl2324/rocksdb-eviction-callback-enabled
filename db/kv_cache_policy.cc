@@ -47,12 +47,17 @@ namespace {
                 return g;
             } 
 
-            void OnMiss(const KVCPKeyCtx& k) {
+            bool OnInvalidation(const KVCPKeyCtx& k) {
                 auto& sh = ShardRef(k);
                 std::lock_guard<std::mutex> lk(sh.mu);
                 auto it = sh.map.find(MakeKey(k));
-                if (it != sh.map.end() && it->second.cached_key_count > 0) {
+                // Row cache check ~ Row cache insertion 사이에 evict로 인해 hash table서 제거 상태
+                if (it == sh.map.end()){
+                    return false;
+                // 아직 invalidated key가 row cache에 존재하는 상태
+                } else {
                     ++it->second.invalidation_count;
+                    return true;
                 }
             }
 
@@ -138,7 +143,9 @@ namespace {
     };
 }
 
-void KVCP_OnRowCacheMiss(const KVCPKeyCtx& k) { KVCPTable::Inst().OnMiss(k); }
+bool KVCP_OnRowCacheInvalidation(const KVCPKeyCtx& k) { 
+    return KVCPTable::Inst().OnInvalidation(k); 
+}
 bool KVCP_ShouldSkipRowCacheInsert(const KVCPKeyCtx& k, uint32_t threshold) {
   return KVCPTable::Inst().ShouldSkipInsert(k, threshold);
 }
