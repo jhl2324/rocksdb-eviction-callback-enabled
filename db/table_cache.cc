@@ -594,6 +594,7 @@ Status TableCache::Get(
     done = GetFromRowCache(user_key, row_cache_key, row_cache_key.Size(),
                            get_context);
     
+    // Row cache hit 상황
     if (done && KVCP_IsHybridEnabled()) {
       if (const char* p = std::getenv("ROW_HIT_LOGGING"); p && p[0] == '1') {
         //LogHybridChoice(ioptions_, "ROW_HIT", user_key, inv, th, cnt);
@@ -606,12 +607,12 @@ Status TableCache::Get(
       }
     }
 
-    // [Hybrid 기법 위한 수정] - Row cache miss 시 hash table 조회 및 갱신 수행
     // 만약 hash table에 key가 있으면 cached key가 invalidated 됐음을 의미
     // Hash table 내부 invalidation_count를 1만큼 increment 수행하기
     if (!done) {
       row_cache_entry = &row_cache_entry_buffer;
-
+      //// 본 iteration에서 block cache hit or I/O로 target key 찾은 경우
+      //// invalidation 여부 확인용으로 활용함
       exist_in_row_cache = (cnt > 0) ? true : false;
     }
   }
@@ -654,7 +655,7 @@ Status TableCache::Get(
 
       get_context->SetReplayLog(row_cache_entry);  // nullptr if no cache.
       /*
-        Block cache hit 조회 -> miss 시 I/O로 읽어오는 과정까지 포함
+        //// Block cache hit 조회 -> miss 시 I/O로 읽어오는 과정까지 포함
       */
       s = t->Get(options, k, get_context, prefix_extractor.get(), skip_filters);
       get_context->SetReplayLog(nullptr);
@@ -684,7 +685,7 @@ Status TableCache::Get(
         verdict = found ? "NO_BC_CHECK_TARGET_KEY_FOUND" : "NO_BC_CHECK_TARGET_KEY_NOT_FOUND";
       }
 
-      // Data block 2개 이상 조회 시 verdict 접두사 추가
+      // Data block 2개 이상 조회 시 verdict 접미사 추가
       char verdict_buf[64];
       if (blocks_accessed >= 2) {
         std::snprintf(verdict_buf, sizeof(verdict_buf), "%s_MULTIBLOCK", verdict);
@@ -693,15 +694,17 @@ Status TableCache::Get(
 
       did_io = (d_data_read > 0);
 
-      std::fprintf(stderr,
-        "[AFTER Block Cache Check] lvl=%d file=%" PRIu64
-        " key=%s inv=%u th=%u cnt=%u s.ok=%d d_data_read=%" PRIu64
-        " d_data_hit=%" PRIu64 " blocks=%" PRIu64 " verdict=%s\n",
-        level, file_meta.fd.GetNumber(),
-        key_hex.c_str(), inv, th, cnt,
-        s.ok() ? 1 : 0,
-        d_data_read, d_data_hit, blocks_accessed, verdict);
-      std::fflush(stderr);
+      if (const char* p = std::getenv("AFTER_BlOCK_CACHE_CHECK_LOGGING"); p && p[0] == '1'){
+        std::fprintf(stderr,
+          "[AFTER Block Cache Check] lvl=%d file=%" PRIu64
+          " key=%s inv=%u th=%u cnt=%u s.ok=%d d_data_read=%" PRIu64
+          " d_data_hit=%" PRIu64 " blocks=%" PRIu64 " verdict=%s\n",
+          level, file_meta.fd.GetNumber(),
+          key_hex.c_str(), inv, th, cnt,
+          s.ok() ? 1 : 0,
+          d_data_read, d_data_hit, blocks_accessed, verdict);
+        std::fflush(stderr);
+      }
     }
   }
 
