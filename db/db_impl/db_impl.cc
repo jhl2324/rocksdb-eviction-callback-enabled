@@ -1879,9 +1879,11 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
         RecordTick(stats_, MEMTABLE_HIT);
         // [logging 추가]
         ////
-        std::string key_hex = key.ToString(true);
-        std::fprintf(stderr, "[Mutable MemTable hit] key=%s\n", key_hex.c_str());
-        std::fflush(stderr);
+        if (const char* p = std::getenv("MEMTABLE_CHECK_LOGGING"); p && p[0] == '1'){
+          std::string key_hex = key.ToString(true);
+          std::fprintf(stderr, "[Mutable MemTable hit] key=%s\n", key_hex.c_str());
+          std::fflush(stderr);
+        }
         ////
       // [point lookup flow 조사] - 5-2. Immutable MemTable hit인 경우
       } else if ((s.ok() || s.IsMergeInProgress()) &&
@@ -1896,9 +1898,11 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
         RecordTick(stats_, MEMTABLE_HIT);
         // [logging 추가]
         ////
-        std::string key_hex = key.ToString(true);
-        std::fprintf(stderr, "[Immutable MemTable hit] key=%s\n", key_hex.c_str());
-        std::fflush(stderr);
+        if (const char* p = std::getenv("MEMTABLE_CHECK_LOGGING"); p && p[0] == '1'){
+          std::string key_hex = key.ToString(true);
+          std::fprintf(stderr, "[Immutable MemTable hit] key=%s\n", key_hex.c_str());
+          std::fflush(stderr);
+        }
         ////
       }
     } else {
@@ -1930,9 +1934,11 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
     PERF_TIMER_GUARD(get_from_output_files_time);
     // [logging 추가]
     ////
+    if (const char* p = std::getenv("MEMTABLE_CHECK_LOGGING"); p && p[0] == '1'){
         std::string key_hex = key.ToString(true);
         std::fprintf(stderr, "[MemTable miss] key=%s\n", key_hex.c_str());
         std::fflush(stderr);
+    }
     ////
     // [point lookup flow 조사] - 7. db/version_set.cc 내 정의된 Version::Get() 호출
     sv->current->Get(
